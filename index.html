@@ -464,7 +464,7 @@ function gemiMesh(tip){
   kutuV(v, beyaz, kx, D*0.5+2.8, 0, 3.8, 1.4, 4.4);          // B kademe
   kutuV(v, beyaz, kx+0.6, D*0.5+4.1, 0, 2.6, 1.2, 5.8);      // kopru (kanatli)
   kutuV(v, cam,  kx+0.6, D*0.5+4.1, 0, 2.65, 0.5, 5.85);     // on cam
-  for (const zs of (-1, 1))
+  for (const zs of [-1, 1])
     kutuV(v, cam, kx+0.6, D*0.5+4.2, zs*2.55, 2.2, 0.45, 0.05);
   kutuV(v, beyaz, kx-0.4, D*0.5+5.0, 0, 1.6, 0.25, 2.6);     // anten tasi
   silindirV(v, [kx-1.4, D*0.5+4.8, 0], [kx-1.4, D*0.5+7.2, 0], 0.05, [0.7,0.7,0.72]);
@@ -487,7 +487,7 @@ function gemiMesh(tip){
                 2.4, 1.0, 1.3);
         }
     // portal vincler (2 adet): bacak + bom
-    for (const cx of (-4.5, 4.5)){
+    for (const cx of [-4.5, 4.5]){
       kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6, -2.4, 0.4, 7.0, 0.4);
       kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6,  2.4, 0.4, 7.0, 0.4);
       kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 6.9, 0, 0.5, 0.5, 5.6);
@@ -497,7 +497,7 @@ function gemiMesh(tip){
     kutuV(v, [0.30,0.27,0.24], 2.0, D*0.5 + 0.55, 0, 18, 0.6, 1.4);   // boru hatti
     for (let i = 0; i < 5; i++)
       kutuV(v, [0.22,0.20,0.18], -4 + i * 3.2, D*0.5 + 0.35, 0, 1.4, 0.5, 2.8);
-    for (const ys of (-1, 1))                                       // manifold kollari
+    for (const ys of [-1, 1])                                       // manifold kollari
       kutuV(v, [0.45,0.28,0.10], 8.0, D*0.5 + 0.9, ys*1.9, 0.35, 0.35, 2.4);
   } else { // bulk carrier: kapaklar
     for (let i = 0; i < 4; i++)
