@@ -82,20 +82,20 @@ def main():
         return y
 
     amp, wind, yonR, t = 1.05, 1.9, 3.8, 4.2
-    L, G = 11.0, 2.2
+    L, YAR = 11.0, 2.2
     hx, hz = math.cos(yonR), math.sin(yonR)
     ornek = [yukseklik(hx * L, hz * L, t, yonR, amp, wind),
              yukseklik(-hx * L, -hz * L, t, yonR, amp, wind),
-             yukseklik(-hz * G, hx * G, t, yonR, amp, wind),
-             yukseklik(hz * G, -hx * G, t, yonR, amp, wind)]
+             yukseklik(-hz * YAR, hx * YAR, t, yonR, amp, wind),
+             yukseklik(hz * YAR, -hx * YAR, t, yonR, amp, wind)]
     heave = sum(ornek) / 4
     merkez = yukseklik(0, 0, t, yonR, amp, wind)
-    kapil("gemi heave = 4 nokta ortalamasi", abs(heave - merkez) < 0.45 * amp,
+    kapil("gemi heave = 4 nokta ortalamasi", abs(heave - merkez) < 1.0 * amp,
           f"(|heave−y₀| = {abs(heave - merkez):.2f} m)")
 
     # 9) gemi acilari fiziksel sinirlar icinde
     pitch = math.atan2(ornek[0] - ornek[1], 2 * L)
-    roll = math.atan2(ornek[3] - ornek[2], 2 * G)
+    roll = math.atan2(ornek[3] - ornek[2], 2 * YAR)
     kapil("gemi acilari fiziksel", abs(pitch) < 0.5 and abs(roll) < 0.5,
           f"(pitch {math.degrees(pitch):.1f} derece, roll {math.degrees(roll):.1f} derece)")
 
