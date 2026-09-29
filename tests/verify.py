@@ -69,7 +69,37 @@ def main():
     # 7) WebGL2 ve VAO (WebGL1'de calismaz)
     kapil("WebGL2 + VAO", "webgl2" in src and "createVertexArray" in src)
 
-    # 8) determinizm
+    # 8) GEMI kapisi: heave = 4 ornek ortalamasi, shader'in surekli
+    #    y(merkez) degerine yakin olmali
+    def yukseklik(x, z, t, yonR, amp, wind):
+        y = 0.0
+        for i, (lam, sap) in enumerate(TABAN):
+            k = 2 * math.pi / lam
+            om = math.sqrt(G * k) * wind
+            aci = yonR + sap
+            y += amp * (1.0 - i * 0.16) * math.sin(
+                k * (math.cos(aci) * x + math.sin(aci) * z) - om * t + i * 2.17)
+        return y
+
+    amp, wind, yonR, t = 1.05, 1.9, 3.8, 4.2
+    L, G = 11.0, 2.2
+    hx, hz = math.cos(yonR), math.sin(yonR)
+    ornek = [yukseklik(hx * L, hz * L, t, yonR, amp, wind),
+             yukseklik(-hx * L, -hz * L, t, yonR, amp, wind),
+             yukseklik(-hz * G, hx * G, t, yonR, amp, wind),
+             yukseklik(hz * G, -hx * G, t, yonR, amp, wind)]
+    heave = sum(ornek) / 4
+    merkez = yukseklik(0, 0, t, yonR, amp, wind)
+    kapil("gemi heave = 4 nokta ortalamasi", abs(heave - merkez) < 0.45 * amp,
+          f"(|heave−y₀| = {abs(heave - merkez):.2f} m)")
+
+    # 9) gemi acilari fiziksel sinirlar icinde
+    pitch = math.atan2(ornek[0] - ornek[1], 2 * L)
+    roll = math.atan2(ornek[3] - ornek[2], 2 * G)
+    kapil("gemi acilari fiziksel", abs(pitch) < 0.5 and abs(roll) < 0.5,
+          f"(pitch {math.degrees(pitch):.1f} derece, roll {math.degrees(roll):.1f} derece)")
+
+    # 10) determinizm
     kapil("determinizm",
           [math.sqrt(G * 2 * math.pi / l) for l, _ in TABAN] ==
           [math.sqrt(G * 2 * math.pi / l) for l, _ in TABAN])

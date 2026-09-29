@@ -230,6 +230,8 @@ let aktif = 'firtina';
 let P = { ...PRESETS[aktif] };
 let yon = P.dir * Math.PI / 180;
 let hizCarpan = 1.0;
+let kameraModu = 'sabit';
+let sonGemiDurum = null;
 
 const PRESET_BTN = document.getElementById('presets');
 for (const k of Object.keys(PRESETS)){
@@ -243,6 +245,14 @@ for (const k of Object.keys(PRESETS)){
   });
   PRESET_BTN.appendChild(b);
 }
+const MOD_BTN = document.createElement('button');
+MOD_BTN.textContent = 'kamera: sabit';
+MOD_BTN.addEventListener('click', () => {
+  kameraModu = kameraModu === 'sabit' ? 'gemi' : 'sabit';
+  MOD_BTN.textContent = 'kamera: ' + (kameraModu === 'gemi' ? 'gemi takibi' : 'sabit');
+  MOD_BTN.classList.toggle('on', kameraModu === 'gemi');
+});
+PRESET_BTN.appendChild(MOD_BTN);
 
 // ---------------------------------------------------------------- etkileşim
 let suruklu = false, sonX = 0;
@@ -319,6 +329,153 @@ function dalgalariHesapla(yonRad, P){
   return { amax: B4[0] };
 }
 
+// ---------------------------------------------------------------- gemiler
+// Gemi pozisyonu DALGA ALANINDAN: 4 ornek (pruva/kic/iskele/sancak).
+function yukseklik(x, z, t, yonR){
+  let y = 0;
+  for (let i = 0; i < 5; i++){
+    const k = 2 * Math.PI / TABAN[i].lam;
+    const om = Math.sqrt(G * k) * (P.wind * hizCarpan);
+    const aci = yonR + TABAN[i].sap;
+    const f = k * (Math.cos(aci) * x + Math.sin(aci) * z) - om * t + i * 2.17;
+    y += P.amp * (1.0 - i * 0.16) * Math.sin(f);
+  }
+  return y;
+}
+function gemiDurumu(x, z, yonR, t, L, G){
+  const hx = Math.cos(yonR), hz = Math.sin(yonR);
+  const o = (a, b) => yukseklik(x + hx * a - hz * b, z + hz * a + hx * b, t, yonR);
+  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, G), sanc = o(0, -G);
+  return {
+    heave: (pruva + kic + isk + sanc) / 4,
+    pitch: Math.atan2(pruva - kic, 2 * L),
+    roll:  Math.atan2(sanc - isk, 2 * G),
+  };
+}
+function modelMat4(x, y, z, heading, pitch, roll){
+  const ch = Math.cos(heading), sh = Math.sin(heading);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const cr = Math.cos(roll),  sr = Math.sin(roll);
+  // ust satirlar sifir yerine R = Ry(h)·Rx(p)·Rz(r) yazilacak
+  return [
+    ch*cr + sh*sp*sr,  cp*sr,            -sh*cr + ch*sp*sr, 0,
+    -ch*sr + sh*sp*cr, cp*cr,            sh*sr + ch*sp*cr,  0,
+    -sh*cp,            -sp,              ch*cp,            0,
+    x, y, z, 1,
+  ];
+}
+
+// --- gemi programi (duz, vertex renkli)
+const SHIP_VS = `#version 300 es
+layout(location=0) in vec3 a_pos;
+layout(location=1) in vec3 a_col;
+uniform mat4 u_vp, u_model;
+out vec3 v_col; out float v_ny;
+void main(){
+  vec4 w = u_model * vec4(a_pos, 1.0);
+  v_col = a_col;
+  v_ny = (u_model * vec4(normalize(a_pos + vec3(0.0,0.6,0.0)), 0.0)).y;
+  gl_Position = u_vp * w;
+}`;
+const SHIP_FS = `#version 300 es
+precision mediump float;
+in vec3 v_col; in float v_ny;
+uniform float u_amb;
+out vec4 frag;
+void main(){
+  float isik = clamp(v_ny, 0.0, 1.0);
+  frag = vec4(pow(v_col * (u_amb + (1.0 - u_amb) * isik), vec3(0.4545)), 1.0);
+}`;
+const shipProg = gl.createProgram();
+gl.attachShader(shipProg, derle(gl.VERTEX_SHADER, SHIP_VS));
+gl.attachShader(shipProg, derle(gl.FRAGMENT_SHADER, SHIP_FS));
+gl.linkProgram(shipProg);
+if (!gl.getProgramParameter(shipProg, gl.LINK_STATUS))
+  throw new Error('ship link: ' + gl.getProgramInfoLog(shipProg));
+const SU = n => gl.getUniformLocation(shipProg, n);
+
+// --- gemi mesh: kutu tabanli low-poly (x = boy, +X pruva)
+function kutuV(veri, renk, cx, cy, cz, sx, sy, sz){
+  const x0 = cx - sx/2, x1 = cx + sx/2;
+  const y0 = cy - sy/2, y1 = cy + sy/2;
+  const z0 = cz - sz/2, z1 = cz + sz/2;
+  const p = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+             [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  const f = [0,1,2, 0,2,3, 5,4,7, 5,7,6, 4,0,3, 4,3,7,
+             1,5,6, 1,6,2, 4,5,1, 4,1,0, 3,2,6, 3,6,7];
+  for (const i of f) veri.push(p[i][0], p[i][1], p[i][2], renk[0], renk[1], renk[2]);
+}
+function gemiMesh(tip){
+  const v = [];
+  const govde = tip === 'tanker' ? [0.06,0.06,0.07] : [0.10,0.13,0.16];
+  kutuV(v, [0.35,0.14,0.10], 0, 0, 0, 22, 2.0, 4.4);            // ana govde
+  kutuV(v, [0.85,0.85,0.86], -8, 2.1, 0, 3.4, 2.2, 3.0);         // kabin
+  kutuV(v, [0.20,0.05,0.04], -8, 4.0, 0, 1.0, 1.4, 1.0);         // baca
+  if (tip === 'konteyner'){
+    const pal = [[0.55,0.12,0.08],[0.10,0.30,0.50],[0.70,0.50,0.10],
+                 [0.12,0.38,0.22],[0.45,0.45,0.48],[0.35,0.10,0.25]];
+    let b = 0;
+    for (let kat = 0; kat < 2; kat++)
+      for (let sira = 0; sira < 3; sira++)
+        for (let bay = 0; bay < 4; bay++){
+          const c = pal[(b * 7 + bay) % pal.length]; b++;
+          kutuV(v, c, -3 + bay * 2.5, 1.8 + kat * 1.0, -1.4 + sira * 1.4, 2.3, 0.95, 1.3);
+        }
+  } else {
+    // tanker: boyunca boru hatti + tank kapaklari
+    kutuV(v, [0.30,0.26,0.22], 2, 1.5, 0, 16, 0.7, 1.2);
+    for (let i = 0; i < 4; i++)
+      kutuV(v, [0.20,0.18,0.16], -2 + i * 3.2, 1.2, 0, 1.2, 0.5, 2.2);
+  }
+  return new Float32Array(v);
+}
+function meshOlustur(veri){
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, veri, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.bindVertexArray(null);
+  return { vao, vbo: b, sayi: veri.length / 6, geriAl: veri.slice() };
+}
+const GEMILER = [
+  { mesh: meshOlustur(gemiMesh('konteyner')), pos: [-15, 44], L: 11, G: 2.2, sap: 0.25 },
+  { mesh: meshOlustur(gemiMesh('tanker')),    pos: [13, 66],  L: 9,  G: 1.9, sap: -0.35 },
+];
+
+// kuyruk (wake): 12 segment, gemi arkasinda, dalgayi izler
+const WAKE_N = 5;
+const wakeVeri = new Float32Array(WAKE_N * 6 * 6);
+const wakeMesh = meshOlustur(wakeVeri);
+function kuyrukuGuncelle(g, t){
+  const hx = Math.cos(g.heading), hz = Math.sin(g.heading);
+  const veri = wakeMesh.geriAl;
+  let o = 0;
+  for (let i = 0; i < WAKE_N; i++){
+    const d0 = 2.5 + i * 2.0, d1 = d0 + 2.0;
+    const g0 = 0.7 + i * 0.22, g1 = g0 + 0.22;
+    const p = (d, yan) => {   // gemi arkasi + yanal acilim (V izi)
+      const x = g.pos[0] - hx * d - hz * yan;
+      const z = g.pos[1] - hz * d + hx * yan;
+      return [x, yukseklik(x, z, t, yon) + 0.06, z];
+    };
+    const a = p(d0, g0), b = p(d0, -g0), c = p(d1, g1), d = p(d1, -g1);
+    // dunya uzakta su rengine dogru soluklasir
+    const f = 1 - i / WAKE_N * 0.45;   // hafif soluklasma
+    const col = [P.su[0] + (0.92 - P.su[0]) * f,
+                 P.su[1] + (0.95 - P.su[1]) * f,
+                 P.su[2] + (0.98 - P.su[2]) * f];
+    for (const v of [a, b, c, b, d, c]){
+      veri[o++] = v[0]; veri[o++] = v[1]; veri[o++] = v[2];
+      veri[o++] = col[0]; veri[o++] = col[1]; veri[o++] = col[2];
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, wakeMesh.vbo);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, veri);
+}
+
 // ---------------------------------------------------------------- döngü
 function boyutla(){
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -334,8 +491,18 @@ function kare(simdi){
   const t = (simdi - baslangic) / 1000;
   dalgalariHesapla(yon, P);
 
-  const proj = persp(62, canvas.width / canvas.height, 0.1, 2000);
-  const view = lookAt(KAM, [0, 1.4, 120], [0, 1, 0]);
+  let proj, view;
+  if (kameraModu === 'gemi' && sonGemiDurum){
+    const g = sonGemiDurum;
+    const hx = Math.cos(g.heading), hz = Math.sin(g.heading);
+    proj = persp(62, canvas.width / canvas.height, 0.1, 2000);
+    view = lookAt([g.pos[0] - hx * 24, g.durum.heave + 7, g.pos[1] - hz * 24],
+                  [g.pos[0] + hx * 15, g.durum.heave + 1, g.pos[1] + hz * 15],
+                  [0, 1, 0]);
+  } else {
+    proj = persp(62, canvas.width / canvas.height, 0.1, 2000);
+    view = lookAt(KAM, [0, 1.4, 120], [0, 1, 0]);
+  }
   const vp = carp(proj, view);
 
   gl.uniformMatrix4fv(U('u_vp'), false, vp);
@@ -357,6 +524,31 @@ function kare(simdi){
   gl.bindVertexArray(vao);
   gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0);
   gl.bindVertexArray(null);
+
+  // --- gemiler: dalga alanindan heave/pitch/roll + kuyruk
+  gl.useProgram(shipProg);
+  gl.uniformMatrix4fv(SU('u_vp'), false, vp);
+  gl.uniform1f(SU('u_amb'), 0.45);
+  let takipGemi = null;
+  for (const g of GEMILER){
+    g.heading = yon + g.sap;
+    const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.G);
+    g.durum = d;
+    gl.uniformMatrix4fv(SU('u_model'), false,
+      modelMat4(g.pos[0], d.heave, g.pos[1], g.heading, d.pitch, d.roll));
+    gl.bindVertexArray(g.mesh.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, g.mesh.sayi);
+    gl.bindVertexArray(null);
+    kuyrukuGuncelle(g, t);
+    gl.uniformMatrix4fv(SU('u_model'), false,
+      new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]));
+    gl.bindVertexArray(wakeMesh.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, wakeMesh.sayi);
+    gl.bindVertexArray(null);
+    if (!takipGemi) takipGemi = g;
+  }
+  gl.useProgram(prog);
+  sonGemiDurum = takipGemi;
 
   // ses: ortalama tepe yüksekliği → kazanç + filtre kesimi
   tepeOrt += (Math.abs(B4[0]) - tepeOrt) * 0.05;
