@@ -373,8 +373,10 @@ function silindirGBuffer(a, b, r, renk){
   ex.normalize();
   const ey = new THREE.Vector3().crossVectors(ez, ex);
   const p = (base, t) => {
-    const v = base.clone().addScaledVector(ex, Math.cos(t) * r).addScaledVector(ey, Math.sin(t) * r);
-    return [v.x, v.y, v.z];
+    const c = Math.cos(t) * r, s = Math.sin(t) * r;
+    return [base[0] + ex.x * c + ey.x * s,
+            base[1] + ex.y * c + ey.y * s,
+            base[2] + ex.z * c + ey.z * s];
   };
   const tri = (a1, b1, c1) => {
     for (const q of [a1, b1, c1]){ pos.push(q[0], q[1], q[2]); col.push(renk[0], renk[1], renk[2]); }
