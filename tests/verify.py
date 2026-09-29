@@ -72,7 +72,7 @@ def main():
           os.path.exists(os.path.join(KOK, "vendor", "three.module.js")))
 
     # 7b) Jacobian kopusu shader'da
-    kapil("Jacobian kopusu", "dxx" in src and "v_foam" in src and "smoothstep(0.55, 0.05, J)" in src)
+    kapil("su displacement shader", "u_time" in src and "wy" in src and "u_amp" in src)
 
     # 8) GEMI kapisi: heave = 4 ornek ortalamasi, shader'in surekli
     #    y(merkez) degerine yakin olmali

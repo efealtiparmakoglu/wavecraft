@@ -188,105 +188,66 @@ const TABAN = [
   { lam: 6.8, sap:  0.30, a: 0.24 },
   { lam: 3.3, sap: -0.38, a: 0.14 },
 ];
-const NXD = 300, NZD = 220, ALAN = 300;
+const NXD = 160, NZD = 120, ALAN = 300;
 const suGeo = new THREE.PlaneGeometry(ALAN, ALAN, NXD - 1, NZD - 1);
 suGeo.rotateX(-Math.PI / 2);
-const suMat = new THREE.ShaderMaterial({
-  fog: false,
-  uniforms: {
-    u_time: { value: 0 },
-    u_amp: { value: P.amp },
-    u_chop: { value: P.chop },
-    u_wind: { value: P.wind * hizCarpan },
-    u_kam: { value: new THREE.Vector3() },
-    u_top: { value: new THREE.Color() },
-    u_hor: { value: new THREE.Color() },
-    u_suRenk: { value: new THREE.Color() },
-    u_sunDir: { value: new THREE.Vector3() },
-    u_time: { value: 0 },
-    u_waveA: { value: Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4()) },
-    u_waveB: { value: Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4()) },
-  },
-  vertexShader: `precision highp float;
-    uniform float u_time, u_amp, u_chop, u_wind;
-    uniform vec4 u_waveA[${DALGA_SAYISI}];
-    uniform vec4 u_waveB[${DALGA_SAYISI}];
-    varying vec3 v_world; varying vec3 v_normal;
-    varying float v_foam, v_sis;
-    void main(){
-      vec3 p = position;
-      vec2 q = p.xz;
-      vec2 disp = vec2(0.0);
-      vec2 dxx = vec2(0.0);
-      float y = 0.0;
-      for (int i = 0; i < ${DALGA_SAYISI}; i++){
-        float k = u_waveA[i].x, om = u_waveA[i].y * u_wind;
-        vec2 wi = u_waveA[i].zw;
-        float A = u_waveB[i].x, stp = u_waveB[i].y, ph = u_waveB[i].z;
-        float f = k * dot(wi, q) - om * u_time + ph;
-        float sf = sin(f), cf = cos(f);
-        y += A * sf;
-        disp -= u_chop * stp * cf * wi;
-        float ak = A * k;
-        dxx += wi * wi * ak * cf;
-      }
-      float J = (1.0 + dxx.x) * (1.0 + dxx.y);
-      v_foam = smoothstep(0.55, 0.05, J);
-      p.xz = q + disp;
-      p.y  = y;
-      v_world = p;
-      v_normal = normalize(vec3(-dxx.x, 1.0, -dxx.y));
-      float d = length(p.xz - cameraPosition.xz);
-      v_sis = smoothstep(80.0, 320.0, d);
-      gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
-    }`,
-  fragmentShader: `precision highp float;
-    uniform vec3 u_kam, u_suRenk, u_sunDir;
-    uniform float u_amp;
-    varying vec3 v_world; varying vec3 v_normal;
-    varying float v_foam, v_sis;
-    ${GOKYUZU_GLSL}
-    void main(){
-      vec3 N = normalize(v_normal);
-      float uzak = length(u_kam.xz - v_world.xz);
-      // mikro dalgacik: 3 oktav, uzaklikla soner (anti-alias)
-      float det = 1.0 - smoothstep(25.0, 150.0, uzak);
-      if (det > 0.01){
-        float t = u_time;
-        float r1 = sin(v_world.x * 1.9 + t * 1.5) * cos(v_world.z * 2.1 - t * 1.2);
-        float r2 = sin(v_world.x * 4.3 - t * 2.4 + v_world.z * 3.7) * 0.55;
-        float r3 = sin(v_world.x * 10.1 + t * 4.1) * sin(v_world.z * 9.3 - t * 3.6) * 0.28;
-        N = normalize(N + vec3(r1 * 0.16 + r2 * 0.10 + r3 * 0.06, 0.0,
-                               r1 * 0.14 - r2 * 0.09 + r3 * 0.05) * det);
-      }
-      vec3 V = normalize(u_kam - v_world);
-      vec3 L = normalize(u_sunDir);
-      float ndv = max(dot(N, V), 0.0);
-      float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
-      vec3 yansima = gokyuzu(normalize(reflect(-V, N)));
-      vec3 H = normalize(L + V);
-      float a = 0.055;
-      float nh = max(dot(N, H), 0.0);
-      float dterm = nh * nh * (a*a - 1.0) + 1.0;
-      float ggx = (a*a) / (3.14159 * dterm * dterm);
-      float spek = ggx * max(dot(N, L), 0.0);
-      float sss = pow(clamp(1.0 - dot(N, L), 0.0, 1.0), 2.0) * 0.35;
-      vec3 renk = mix(u_suRenk, yansima, fres);
-      renk += u_suRenk * sss;
-      renk += vec3(1.0, 0.88, 0.70) * spek * 0.9;
-      // kopuk: Jacobian + tepe bandi (gurultu ile kirilmis)
-      float tepe = smoothstep(0.55, 1.25, v_world.y / max(u_amp, 0.35));
-      float kirilim = 0.5 + 0.5 * sin(v_world.x * 1.7 + u_time * 1.4)
-                                * sin(v_world.z * 1.3 - u_time * 1.1);
-      float kopuk = clamp(v_foam * 0.85 + tepe * 0.75 * kirilim, 0.0, 1.0);
-      renk = mix(renk, vec3(0.86, 0.91, 0.96), kopuk * 0.85);
-      renk = mix(renk, u_hor, v_sis * 0.92);
-      gl_FragColor = vec4(renk, 1.0);
-    }`,
+
+const suMat = new THREE.MeshStandardMaterial({
+  color: 0x1a5276, roughness: 0.12, metalness: 0.55,
+  side: THREE.DoubleSide,
 });
+suMat.onBeforeCompile = (shader) => {
+  shader.uniforms.u_time = { value: 0 };
+  shader.uniforms.u_dirX = { value: 1.0 };
+  shader.uniforms.u_dirZ = { value: 0.0 };
+  shader.uniforms.u_amp = { value: 0.8 };
+  shader.uniforms.u_chop = { value: 0.5 };
+  shader.uniforms.u_wind = { value: 1.0 };
+  suMat.userData.shader = shader;
+
+  shader.vertexShader = shader.vertexShader.replace(
+    '#include <common>',
+    `#include <common>
+    uniform float u_time, u_dirX, u_dirZ, u_amp, u_chop, u_wind;`
+  );
+  shader.vertexShader = shader.vertexShader.replace(
+    '#include <begin_vertex>',
+    `#include <begin_vertex>
+    vec2 wp = vec2(transformed.x, -transformed.z);
+    float wy = 0.0;
+    vec2 wdisp = vec2(0.0);
+    for (int i = 0; i < 5; i++){
+      float wl = 44.0 / pow(1.8, float(i));
+      float kk = 6.28318 / wl;
+      float om = sqrt(9.81 * kk);
+      float ang = atan(u_dirZ, u_dirX) + float(i) * 0.17 - 0.08;
+      vec2 wi = vec2(cos(ang), sin(ang));
+      float A = u_amp * pow(0.62, float(i));
+      float f = kk * dot(wi, wp) - om * u_time * u_wind + float(i) * 2.17;
+      wy += A * sin(f);
+      wdisp -= u_chop * (0.55 / (kk * 5.0)) * cos(f) * wi;
+    }
+    transformed.x += wdisp.x;
+    transformed.z += wdisp.y;
+    transformed.y += wy;`
+  );
+};
+
 const su = new THREE.Mesh(suGeo, suMat);
 su.frustumCulled = false;
+su.receiveShadow = true;
 scene.add(su);
+
+function suGuncelle(t, yonR, P) {
+  const sh = suMat.userData.shader;
+  if (!sh) return;
+  sh.uniforms.u_time.value = t;
+  sh.uniforms.u_dirX.value = Math.cos(yonR);
+  sh.uniforms.u_dirZ.value = Math.sin(yonR);
+  sh.uniforms.u_amp.value = P.amp;
+  sh.uniforms.u_chop.value = P.chop;
+  sh.uniforms.u_wind.value = P.wind * hizCarpan;
+}
 
 const A4 = new Float32Array(DALGA_SAYISI * 4);
 const B4 = new Float32Array(DALGA_SAYISI * 4);
@@ -315,7 +276,6 @@ function uygunlukGuncelle(){
   }
   suMat.uniforms.u_amp.value = 1.0;
   suMat.uniforms.u_chop.value = P.chop;
-  suMat.uniforms.u_wind.value = P.wind * hizCarpan;
   suMat.uniforms.u_top.value.setRGB(...P.top);
   suMat.uniforms.u_hor.value.setRGB(...P.hor);
   suMat.uniforms.u_suRenk.value.setRGB(...P.su);
@@ -547,10 +507,7 @@ function kare(simdi){
   const t = (simdi - baslangic) / 1000;
   sonDt = Math.min(0.05, (simdi - sonKare) / 1000 + sonDt);
   const { tepe } = dalgalariHesapla(yon, P);
-  suMat.uniforms.u_time.value = t;
-  suMat.uniforms.u_kam.value.copy(camera.position);
   gokMat.uniforms.u_time.value = t;
-  suMat.uniforms.u_wind.value = P.wind * hizCarpan;
 
   let takip = null;
   for (const g of GEMILER){
@@ -567,6 +524,7 @@ function kare(simdi){
     if (!takip) takip = g;
   }
 
+  suGuncelle(t, yon, P);
   if (kameraModu === 'gemi' && takip){
     const hx = Math.cos(takip.heading), hz = Math.sin(takip.heading);
     const d = gemiDurumu(takip.pos[0], takip.pos[1], takip.heading, t, takip.L, takip.Y);
