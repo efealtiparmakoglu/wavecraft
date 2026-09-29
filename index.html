@@ -342,21 +342,20 @@ function yukseklik(x, z, t, yonR){
   }
   return y;
 }
-function gemiDurumu(x, z, yonR, t, L, G){
+function gemiDurumu(x, z, yonR, t, L, Y){
   const hx = Math.cos(yonR), hz = Math.sin(yonR);
   const o = (a, b) => yukseklik(x + hx * a - hz * b, z + hz * a + hx * b, t, yonR);
-  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, G), sanc = o(0, -G);
+  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, Y), sanc = o(0, -Y);
   return {
     heave: (pruva + kic + isk + sanc) / 4,
     pitch: Math.atan2(pruva - kic, 2 * L),
-    roll:  Math.atan2(sanc - isk, 2 * G),
+    roll:  Math.atan2(sanc - isk, 2 * Y),
   };
 }
 function modelMat4(x, y, z, heading, pitch, roll){
   const ch = Math.cos(heading), sh = Math.sin(heading);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
   const cr = Math.cos(roll),  sr = Math.sin(roll);
-  // ust satirlar sifir yerine R = Ry(h)·Rx(p)·Rz(r) yazilacak
   return [
     ch*cr + sh*sp*sr,  cp*sr,            -sh*cr + ch*sp*sr, 0,
     -ch*sr + sh*sp*cr, cp*cr,            sh*sr + ch*sp*cr,  0,
@@ -374,7 +373,7 @@ out vec3 v_col; out float v_ny;
 void main(){
   vec4 w = u_model * vec4(a_pos, 1.0);
   v_col = a_col;
-  v_ny = (u_model * vec4(normalize(a_pos + vec3(0.0,0.6,0.0)), 0.0)).y;
+  v_ny = (u_model * vec4(normalize(a_pos + vec3(0.0, 0.7, 0.0)), 0.0)).y;
   gl_Position = u_vp * w;
 }`;
 const SHIP_FS = `#version 300 es
@@ -394,40 +393,134 @@ if (!gl.getProgramParameter(shipProg, gl.LINK_STATUS))
   throw new Error('ship link: ' + gl.getProgramInfoLog(shipProg));
 const SU = n => gl.getUniformLocation(shipProg, n);
 
-// --- gemi mesh: kutu tabanli low-poly (x = boy, +X pruva)
-function kutuV(veri, renk, cx, cy, cz, sx, sy, sz){
-  const x0 = cx - sx/2, x1 = cx + sx/2;
-  const y0 = cy - sy/2, y1 = cy + sy/2;
-  const z0 = cz - sz/2, z1 = cz + sz/2;
+// --- geometri ilkelleri
+function kutuV(v, renk, cx, cy, cz, sx, sy, sz){
+  const x0 = cx - sx/2, x1 = cx + sx/2, y0 = cy - sy/2, y1 = cy + sy/2,
+        z0 = cz - sz/2, z1 = cz + sz/2;
   const p = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
              [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
   const f = [0,1,2, 0,2,3, 5,4,7, 5,7,6, 4,0,3, 4,3,7,
              1,5,6, 1,6,2, 4,5,1, 4,1,0, 3,2,6, 3,6,7];
-  for (const i of f) veri.push(p[i][0], p[i][1], p[i][2], renk[0], renk[1], renk[2]);
+  for (const i of f) v.push(p[i][0], p[i][1], p[i][2], renk[0], renk[1], renk[2]);
 }
+function ucgenV(v, a, b, c, renk){
+  for (const p of [a, b, c]) v.push(p[0], p[1], p[2], renk[0], renk[1], renk[2]);
+}
+
+// --- govde: sivri pruva + dolgun kic profilli tek parca prizma
+function govdeV(v, L, W, D, cHava, cSu, cBant){
+  const ST = 9;
+  const kesisit = [];
+  for (let i = 0; i < ST; i++){
+    const u = i / (ST - 1);
+    const x = -L/2 + u * L;
+    let w;
+    if (u < 0.22)      w = 0.68 + (u / 0.22) * 0.30;      // kic genisler
+    else if (u > 0.66) w = 1.0 - ((u - 0.66) / 0.34) * 0.88; // pruva sivrilir
+    else               w = 0.98 - Math.abs(u - 0.5) * 0.06;
+    const sheer = u * u * 0.14 * D;
+    const d = D/2 * (u > 0.8 ? 1 - (u - 0.8) / 0.2 * 0.45 : 1);
+    kesisit.push({ x, bw: w * W/2 * 0.62, dw: w * W/2,
+                   y0: -d, y1: d * 0.5 + sheer });
+  }
+  for (let i = 0; i < ST - 1; i++){
+    const A = kesisit[i], B = kesisit[i + 1];
+    const aL0 = [A.x, A.y0, -A.bw], aL1 = [A.x, A.y1, -A.dw];
+    const bL0 = [B.x, B.y0, -B.bw], bL1 = [B.x, B.y1, -B.dw];
+    const aR0 = [A.x, A.y0,  A.bw], aR1 = [A.x, A.y1,  A.dw];
+    const bR0 = [B.x, B.y0,  B.bw], bR1 = [B.x, B.y1,  B.dw];
+    const su = A.y1 < 0.02 ? cSu : cHava;                 // su alti kizil
+    ucgenV(v, aL0, bL0, aL1, su);   ucgenV(v, aL1, bL0, bL1, su);  // iskele yan
+    ucgenV(v, aR0, aR1, bR0, su);   ucgenV(v, aR1, bR1, bR0, su);  // sancak yan
+    ucgenV(v, aL0, aL1, aR1, su);   ucgenV(v, aL0, aR1, aR0, su);  // dip
+    ucgenV(v, aL1, bL1, bR1, cHava); ucgenV(v, aL1, bR1, aR1, cHava); // guverte
+    // su hatti bandi
+    const b0 = 0.05, b1 = 0.35;
+    ucgenV(v, [A.x, A.y0 + (A.y1-A.y0)*0.62, -A.dw*1.002],
+              [B.x, B.y0 + (B.y1-B.y0)*0.62, -B.dw*1.002],
+              [A.x, A.y0 + (A.y1-A.y0)*0.80, -A.dw*1.002], cBant);
+    ucgenV(v, [A.x, A.y0 + (A.y1-A.y0)*0.80, -A.dw*1.002],
+              [B.x, B.y0 + (B.y1-B.y0)*0.80, -B.dw*1.002],
+              [B.x, B.y0 + (B.y1-B.y0)*0.62, -B.dw*1.002], cBant);
+  }
+}
+
 function gemiMesh(tip){
   const v = [];
-  const govde = tip === 'tanker' ? [0.06,0.06,0.07] : [0.10,0.13,0.16];
-  kutuV(v, [0.35,0.14,0.10], 0, 0, 0, 22, 2.0, 4.4);            // ana govde
-  kutuV(v, [0.85,0.85,0.86], -8, 2.1, 0, 3.4, 2.2, 3.0);         // kabin
-  kutuV(v, [0.20,0.05,0.04], -8, 4.0, 0, 1.0, 1.4, 1.0);         // baca
+  const L = 26, W = 6.2, D = 5.0;
+  const cHava = tip === 'tanker' ? [0.10,0.11,0.13] : [0.13,0.17,0.22];
+  const cSu   = [0.45,0.12,0.07];
+  const cBant = [0.03,0.03,0.04];
+  govdeV(v, L, W, D, cHava, cSu, cBant);
+
+  // kule ust yapisi: 3 kademe + kanat kopru + cam bantlari
+  const beyaz = [0.80,0.80,0.82], cam = [0.06,0.10,0.14];
+  const kx = -L*0.30;
+  kutuV(v, beyaz, kx, D*0.5+1.1, 0, 4.6, 2.2, 5.2);          // A kademe
+  kutuV(v, beyaz, kx, D*0.5+2.8, 0, 3.8, 1.4, 4.4);          // B kademe
+  kutuV(v, beyaz, kx+0.6, D*0.5+4.1, 0, 2.6, 1.2, 5.8);      // kopru (kanatli)
+  kutuV(v, cam,  kx+0.6, D*0.5+4.1, 0, 2.65, 0.5, 5.85);     // on cam
+  for (const zs of (-1, 1))
+    kutuV(v, cam, kx+0.6, D*0.5+4.2, zs*2.55, 2.2, 0.45, 0.05);
+  kutuV(v, beyaz, kx-0.4, D*0.5+5.0, 0, 1.6, 0.25, 2.6);     // anten tasi
+  silindirV(v, [kx-1.4, D*0.5+4.8, 0], [kx-1.4, D*0.5+7.2, 0], 0.05, [0.7,0.7,0.72]);
+  silindirV(v, [kx-1.4, D*0.5+6.6, -1.1], [kx-1.4, D*0.5+6.6, 1.1], 0.04, [0.7,0.7,0.72]);
+
+  // baca: eğik üst
+  kutuV(v, [0.80,0.14,0.10], kx-2.6, D*0.5+1.6, 0, 1.6, 3.0, 1.8);
+  kutuV(v, [0.05,0.05,0.06], kx-2.6, D*0.5+3.2, 0, 1.7, 0.5, 1.9);
+
   if (tip === 'konteyner'){
-    const pal = [[0.55,0.12,0.08],[0.10,0.30,0.50],[0.70,0.50,0.10],
-                 [0.12,0.38,0.22],[0.45,0.45,0.48],[0.35,0.10,0.25]];
+    const pal = [[0.55,0.12,0.08],[0.10,0.30,0.50],[0.72,0.52,0.10],
+                 [0.12,0.38,0.22],[0.48,0.48,0.50],[0.35,0.10,0.25],
+                 [0.60,0.25,0.08]];
     let b = 0;
-    for (let kat = 0; kat < 2; kat++)
-      for (let sira = 0; sira < 3; sira++)
-        for (let bay = 0; bay < 4; bay++){
-          const c = pal[(b * 7 + bay) % pal.length]; b++;
-          kutuV(v, c, -3 + bay * 2.5, 1.8 + kat * 1.0, -1.4 + sira * 1.4, 2.3, 0.95, 1.3);
+    for (let kat = 0; kat < 3; kat++)
+      for (let sira = 0; sira < 4; sira++)
+        for (let bay = 0; bay < 5; bay++){
+          const c = pal[(b * 5 + bay * 3) % pal.length]; b++;
+          kutuV(v, c, -6.5 + bay * 2.55, D*0.5 + 0.7 + kat * 1.05, -2.1 + sira * 1.4,
+                2.4, 1.0, 1.3);
         }
-  } else {
-    // tanker: boyunca boru hatti + tank kapaklari
-    kutuV(v, [0.30,0.26,0.22], 2, 1.5, 0, 16, 0.7, 1.2);
+    // portal vincler (2 adet): bacak + bom
+    for (const cx of (-4.5, 4.5)){
+      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6, -2.4, 0.4, 7.0, 0.4);
+      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6,  2.4, 0.4, 7.0, 0.4);
+      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 6.9, 0, 0.5, 0.5, 5.6);
+      kutuV(v, [0.70,0.50,0.10], cx, D*0.5 + 4.4, 3.6, 0.35, 0.35, 5.2); // bom
+    }
+  } else if (tip === 'tanker'){
+    kutuV(v, [0.30,0.27,0.24], 2.0, D*0.5 + 0.55, 0, 18, 0.6, 1.4);   // boru hatti
+    for (let i = 0; i < 5; i++)
+      kutuV(v, [0.22,0.20,0.18], -4 + i * 3.2, D*0.5 + 0.35, 0, 1.4, 0.5, 2.8);
+    for (const ys of (-1, 1))                                       // manifold kollari
+      kutuV(v, [0.45,0.28,0.10], 8.0, D*0.5 + 0.9, ys*1.9, 0.35, 0.35, 2.4);
+  } else { // bulk carrier: kapaklar
     for (let i = 0; i < 4; i++)
-      kutuV(v, [0.20,0.18,0.16], -2 + i * 3.2, 1.2, 0, 1.2, 0.5, 2.2);
+      kutuV(v, [0.42,0.40,0.36], -5 + i * 4.2, D*0.5 + 0.5, 0, 3.6, 0.7, 4.6);
   }
+
+  // kic isiklari + direkler
+  silindirV(v, [kx, D*0.5 + 6.0, 0], [kx, D*0.5 + 8.6, 0], 0.05, [0.75,0.75,0.78]);
+  kutuV(v, [0.95,0.25,0.25], kx+1.3, D*0.5 + 1.6, W/2*0.9, 0.3, 0.3, 0.2);
+  kutuV(v, [0.25,0.95,0.35], kx+1.3, D*0.5 + 1.6, -W/2*0.9, 0.3, 0.3, 0.2);
   return new Float32Array(v);
+}
+function silindirV(v, a, b, r, renk){
+  const d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+  const l = Math.hypot(...d);
+  const ez = d.map(x => x / l);
+  let ex = [ez[2], 0, -ez[0]];
+  const el2 = Math.hypot(...ex) || 1; ex = ex.map(x => x/el2);
+  const ey = [ez[1]*ex[2]-ez[2]*ex[1], ez[2]*ex[0]-ez[0]*ex[2], ez[0]*ex[1]-ez[1]*ex[0]];
+  for (let i = 0; i < 6; i++){
+    const t0 = i/6*Math.PI*2, t1 = (i+1)/6*Math.PI*2;
+    const p = (base, t) => [base[0] + (ex[0]*Math.cos(t) + ey[0]*Math.sin(t))*r,
+                             base[1] + (ex[1]*Math.cos(t) + ey[1]*Math.sin(t))*r,
+                             base[2] + (ex[2]*Math.cos(t) + ey[2]*Math.sin(t))*r];
+    ucgenV(v, p(a,t0), p(b,t0), p(a,t1), renk);
+    ucgenV(v, p(a,t1), p(b,t0), p(b,t1), renk);
+  }
 }
 function meshOlustur(veri){
   const vao = gl.createVertexArray();
@@ -441,11 +534,20 @@ function meshOlustur(veri){
   return { vao, vbo: b, sayi: veri.length / 6, geriAl: veri.slice() };
 }
 const GEMILER = [
-  { mesh: meshOlustur(gemiMesh('konteyner')), pos: [-15, 44], L: 11, G: 2.2, sap: 0.25 },
-  { mesh: meshOlustur(gemiMesh('tanker')),    pos: [13, 66],  L: 9,  G: 1.9, sap: -0.35 },
+  { mesh: meshOlustur(gemiMesh('konteyner')), pos: [-15, 44], hiz: 5.5, L: 13, Y: 3.1, sap: 0.22 },
+  { mesh: meshOlustur(gemiMesh('tanker')),    pos: [13, 66],  hiz: 4.2, L: 13, Y: 3.1, sap: -0.30 },
+  { mesh: meshOlustur(gemiMesh('bulk')),      pos: [-4, 100], hiz: 5.0, L: 13, Y: 3.1, sap: 0.10 },
 ];
+function gemilerIlerlet(dt){
+  for (const g of GEMILER){
+    g.heading = yon + g.sap;
+    g.pos[0] += Math.cos(g.heading) * g.hiz * hizCarpan * dt * 0.35;
+    g.pos[1] += Math.sin(g.heading) * g.hiz * hizCarpan * dt * 0.35;
+    if (g.pos[1] > 240){ g.pos[1] = -20; g.pos[0] = (Math.random() - 0.5) * 130; }
+  }
+}
 
-// kuyruk (wake): 12 segment, gemi arkasinda, dalgayi izler
+// kuyruk (wake): 5 segment, gemi arkasinda, dalgayi izler
 const WAKE_N = 5;
 const wakeVeri = new Float32Array(WAKE_N * 6 * 6);
 const wakeMesh = meshOlustur(wakeVeri);
@@ -456,14 +558,13 @@ function kuyrukuGuncelle(g, t){
   for (let i = 0; i < WAKE_N; i++){
     const d0 = 2.5 + i * 2.0, d1 = d0 + 2.0;
     const g0 = 0.7 + i * 0.22, g1 = g0 + 0.22;
-    const p = (d, yan) => {   // gemi arkasi + yanal acilim (V izi)
+    const p = (d, yan) => {
       const x = g.pos[0] - hx * d - hz * yan;
       const z = g.pos[1] - hz * d + hx * yan;
       return [x, yukseklik(x, z, t, yon) + 0.06, z];
     };
     const a = p(d0, g0), b = p(d0, -g0), c = p(d1, g1), d = p(d1, -g1);
-    // dunya uzakta su rengine dogru soluklasir
-    const f = 1 - i / WAKE_N * 0.45;   // hafif soluklasma
+    const f = 1 - i / WAKE_N * 0.45;
     const col = [P.su[0] + (0.92 - P.su[0]) * f,
                  P.su[1] + (0.95 - P.su[1]) * f,
                  P.su[2] + (0.98 - P.su[2]) * f];
@@ -486,7 +587,7 @@ function boyutla(){
 addEventListener('resize', boyutla); boyutla();
 
 const baslangic = performance.now();
-let sonKare = baslangic, tepeOrt = 0, fpsOrt = 60;
+let sonKare = baslangic, sonZaman = baslangic, tepeOrt = 0, fpsOrt = 60;
 function kare(simdi){
   const t = (simdi - baslangic) / 1000;
   dalgalariHesapla(yon, P);
@@ -530,9 +631,9 @@ function kare(simdi){
   gl.uniformMatrix4fv(SU('u_vp'), false, vp);
   gl.uniform1f(SU('u_amb'), 0.45);
   let takipGemi = null;
+  gemilerIlerlet(Math.min(0.05, (simdi - sonZaman) / 1000));
   for (const g of GEMILER){
-    g.heading = yon + g.sap;
-    const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.G);
+    const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.Y);
     g.durum = d;
     gl.uniformMatrix4fv(SU('u_model'), false,
       modelMat4(g.pos[0], d.heave, g.pos[1], g.heading, d.pitch, d.roll));
@@ -549,6 +650,7 @@ function kare(simdi){
   }
   gl.useProgram(prog);
   sonGemiDurum = takipGemi;
+  sonZaman = simdi;
 
   // ses: ortalama tepe yüksekliği → kazanç + filtre kesimi
   tepeOrt += (Math.abs(B4[0]) - tepeOrt) * 0.05;
