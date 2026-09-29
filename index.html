@@ -43,6 +43,10 @@
 <div class="hud" id="hint">ses: <span id="sesDurum">kapalı — tıkla</span></div>
 
 <script>
+window.addEventListener('error', function(e){
+  const f = document.getElementById('fps');
+  if (f) f.textContent = 'HATA: ' + (e.message || e) + ' @' + (e.lineno || '?');
+});
 'use strict';
 // =====================================================================
 // wavecraft — tarayıcıda gerçek zamanlı Gerstner okyanus.
@@ -377,7 +381,7 @@ void main(){
   gl_Position = u_vp * w;
 }`;
 const SHIP_FS = `#version 300 es
-precision mediump float;
+precision highp float;
 in vec3 v_col; in float v_ny;
 uniform float u_amb;
 out vec4 frag;
