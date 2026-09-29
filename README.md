@@ -10,7 +10,8 @@
 
 ## 🚢 Gerçek zamanlı gemiler
 
-İki gemi (konteyner + tanker) **dalga alanının içinde** yüzer: her karede pruva/kıç/iskele/sancak olmak üzere 4 nokta örneklenir, gövde ortalama yükseklikte (heave) durur ve **dalga eğiminden pitch + yanal farktan roll** alır — ship-cinema'daki 3B mantığın 60 fps'lik hali. Kuyruk izleri de dalgayı örnekleyerek arkaya seriliyor. **📷 kamera** düğmesiyle geminin peşinden kovalayabilirsin.
+Üç gemi — **konteyner** (portal vinçli), **tanker** (boru hattı + manifold) ve **bulk carrier** — **dalga alanının içinde** yüzer: her karede pruva/kıç/iskele/sancak olmak üzere 4 nokta örneklenir, gövde ortalama yükseklikte (heave) durur ve **dalga eğiminden pitch + yanal farktan roll** alır — ship-cinema'daki 3B mantığın 60 fps'lik hali.
+Gövdeler kutu yığını değil: **sivri pruva + dolgun kıç profilli tek parça prizma**, kırmızı antifouling + siyah su hattı bandı, 3 kademeli kule üst yapı, kanat köprüsü ve cam bantları, direkler, kıç ışıkları. Gemiler **yürür** (dalga yönünde ~2 m/s) ve görüş alanını geçince sarmalanır; kuyruk izleri dalgayı örnekleyerek arkaya seriliyor. **📷 kamera** düğmesiyle geminin peşinden kovalayabilirsin.
 
 ## 🎛️ Preset'ler
 
