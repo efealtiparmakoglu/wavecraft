@@ -1,6 +1,6 @@
 # 🌊 wavecraft
 
-**EN:** A **real-time Gerstner ocean in your browser** — the same physics the `ocean-cinema`/`ship-cinema` repos render in Cycles, running at 60 fps in a fragment shader: deep-water dispersion **ω = √(g·k)** per wave train, choppiness, analytic normals, fresnel sky reflection and sun glitter. And it **sounds** like the sea it draws: filtered noise whose gain and cutoff follow the live wave-crest amplitude (Web Audio). Drag to turn the swell, wheel/arrows for wind speed, click for sound. Zero dependencies, one HTML file.
+**EN:** A **real-time Gerstner ocean in your browser** — now rendered with **three.js** (vendored locally, no CDN): PBR standard materials, real directional light + **shadow maps**, **ACES filmic tone mapping**, procedural sky dome, and a water shader with **Fresnel-weighted sky reflection, GGX sun glitter, subsurface shimmer and Jacobian-driven foam** (whitecaps appear where the Gerstner displacement actually compresses the surface). Orbit camera, chase-cam, drifting ships with real heave/pitch/roll. — the same physics the `ocean-cinema`/`ship-cinema` repos render in Cycles, running at 60 fps in a fragment shader: deep-water dispersion **ω = √(g·k)** per wave train, choppiness, analytic normals, fresnel sky reflection and sun glitter. And it **sounds** like the sea it draws: filtered noise whose gain and cutoff follow the live wave-crest amplitude (Web Audio). Drag to turn the swell, wheel/arrows for wind speed, click for sound. Zero dependencies, one HTML file.
 
 **TR:** Tarayıcında **gerçek zamanlı Gerstner denizi** — ocean-cinema/ship-cinema'nın Cycles'te render ettiği fizik şimdi shader'da 60 fps: dalga trenlerine göre derin su dispersiyonu **ω = √(g·k)**, choppiness, analitik normal'ler, fresnel gök yansıması ve güneş glitter'ı. Ve **deniz gibi duyuyor**: kazancı ve filtre kesimi canlı tepe yüksekliğini takip eden filtrelenmiş gürültü (Web Audio). Sürükle: yön · tekerlek/oklar: hız · tık: ses. Sıfır bağımlılık, tek HTML dosyası.
 
@@ -45,6 +45,9 @@ node --check <(script bloğu)   # JS sözdizimi
 - **Chop gate**: |horizontal shift| < wave height (no mesh fold)
 - **Structure gates**: 5 presets, all uniforms present, audio chain wired, WebGL2+VAO
 - **Determinism gate**
+
+| ✨ Render | three.js (yerel vendor) · PBR · shadow map · ACES · GGX + Fresnel su |
+| 🫧 Köpük | Gerstner Jacobian determinantinden — fiziksel beyaz köpük |
 
 ## 🧪 Why / Neden
 
