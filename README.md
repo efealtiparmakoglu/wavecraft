@@ -8,6 +8,10 @@
 
 **Canlı: [efealtiparmakoglu.github.io/wavecraft](https://efealtiparmakoglu.github.io/wavecraft)** · yerelde: `open index.html`
 
+## 🚢 Gerçek zamanlı gemiler
+
+İki gemi (konteyner + tanker) **dalga alanının içinde** yüzer: her karede pruva/kıç/iskele/sancak olmak üzere 4 nokta örneklenir, gövde ortalama yükseklikte (heave) durur ve **dalga eğiminden pitch + yanal farktan roll** alır — ship-cinema'daki 3B mantığın 60 fps'lik hali. Kuyruk izleri de dalgayı örnekleyerek arkaya seriliyor. **📷 kamera** düğmesiyle geminin peşinden kovalayabilirsin.
+
 ## 🎛️ Preset'ler
 
 | preset | ruh hali |
