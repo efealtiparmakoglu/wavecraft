@@ -137,7 +137,7 @@ sunLight.shadow.camera.near = 1;  sunLight.shadow.camera.far = 500;
 sunLight.shadow.bias = -0.0006;
 scene.add(sunLight);
 scene.add(sunLight.target);
-scene.add(new THREE.HemisphereLight(0x9db8e0, 0x1a2530, 0.6));
+scene.add(new THREE.HemisphereLight(0xffb87a, 0x2a3a4a, 0.85));
 
 const GOKYUZU_GLSL = `
 uniform vec3 u_top, u_hor;
@@ -192,62 +192,34 @@ const NXD = 160, NZD = 120, ALAN = 300;
 const suGeo = new THREE.PlaneGeometry(ALAN, ALAN, NXD - 1, NZD - 1);
 suGeo.rotateX(-Math.PI / 2);
 
-const suMat = new THREE.MeshStandardMaterial({
-  color: 0x1a5276, roughness: 0.12, metalness: 0.55,
-  side: THREE.DoubleSide,
+const suMat = new THREE.MeshPhongMaterial({
+  color: 0x0a4d6e, specular: 0x88ccff, shininess: 80,
+  side: THREE.DoubleSide, flatShading: true,
 });
-suMat.onBeforeCompile = (shader) => {
-  shader.uniforms.u_time = { value: 0 };
-  shader.uniforms.u_dirX = { value: 1.0 };
-  shader.uniforms.u_dirZ = { value: 0.0 };
-  shader.uniforms.u_amp = { value: 0.8 };
-  shader.uniforms.u_chop = { value: 0.5 };
-  shader.uniforms.u_wind = { value: 1.0 };
-  suMat.userData.shader = shader;
-
-  shader.vertexShader = shader.vertexShader.replace(
-    '#include <common>',
-    `#include <common>
-    uniform float u_time, u_dirX, u_dirZ, u_amp, u_chop, u_wind;`
-  );
-  shader.vertexShader = shader.vertexShader.replace(
-    '#include <begin_vertex>',
-    `#include <begin_vertex>
-    vec2 wp = vec2(transformed.x, -transformed.z);
-    float wy = 0.0;
-    vec2 wdisp = vec2(0.0);
-    for (int i = 0; i < 5; i++){
-      float wl = 44.0 / pow(1.8, float(i));
-      float kk = 6.28318 / wl;
-      float om = sqrt(9.81 * kk);
-      float ang = atan(u_dirZ, u_dirX) + float(i) * 0.17 - 0.08;
-      vec2 wi = vec2(cos(ang), sin(ang));
-      float A = u_amp * pow(0.62, float(i));
-      float f = kk * dot(wi, wp) - om * u_time * u_wind + float(i) * 2.17;
-      wy += A * sin(f);
-      wdisp -= u_chop * (0.55 / (kk * 5.0)) * cos(f) * wi;
-    }
-    transformed.x += wdisp.x;
-    transformed.z += wdisp.y;
-    transformed.y += wy;`
-  );
-};
-
 const su = new THREE.Mesh(suGeo, suMat);
 su.frustumCulled = false;
 su.receiveShadow = true;
 scene.add(su);
 
-function suGuncelle(t, yonR, P) {
-  const sh = suMat.userData.shader;
-  if (!sh) return;
-  sh.uniforms.u_time.value = t;
-  sh.uniforms.u_dirX.value = Math.cos(yonR);
-  sh.uniforms.u_dirZ.value = Math.sin(yonR);
-  sh.uniforms.u_amp.value = P.amp;
-  sh.uniforms.u_chop.value = P.chop;
-  sh.uniforms.u_wind.value = P.wind * hizCarpan;
+function suGuncelle(t, yonR, Pr) {
+  const pos = suGeo.attributes.position;
+  const hx = Math.cos(yonR), hz = Math.sin(yonR);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    let y = 0;
+    for (let w = 0; w < 5; w++) {
+      const lam = 44.0 / Math.pow(1.8, w);
+      const k = 2 * Math.PI / lam;
+      const om = Math.sqrt(9.81 * k);
+      const aci = yonR + TABAN[w].sap;
+      const f = k * (Math.cos(aci) * x + Math.sin(aci) * z) - om * t + w * 2.17;
+      y += Pr.amp * TABAN[w].a * Math.sin(f);
+    }
+    pos.setY(i, y);
+  }
+  pos.needsUpdate = true;
 }
+
 
 const A4 = new Float32Array(DALGA_SAYISI * 4);
 const B4 = new Float32Array(DALGA_SAYISI * 4);
@@ -271,20 +243,12 @@ function dalgalariHesapla(yonRad, Pr){
 function uygunlukGuncelle(){
   dalgalariHesapla(yon, P);
   for (let i = 0; i < DALGA_SAYISI; i++){
-    suMat.uniforms.u_waveA.value[i].copy(W4[i]);
-    suMat.uniforms.u_waveB.value[i].copy(WV4[i]);
   }
-  suMat.uniforms.u_amp.value = 1.0;
-  suMat.uniforms.u_chop.value = P.chop;
-  suMat.uniforms.u_top.value.setRGB(...P.top);
-  suMat.uniforms.u_hor.value.setRGB(...P.hor);
-  suMat.uniforms.u_suRenk.value.setRGB(...P.su);
   gokMat.uniforms.u_top.value.setRGB(...P.top);
   gokMat.uniforms.u_hor.value.setRGB(...P.hor);
   const se = 0.30, sa = yon + P.suAci;
   sunDir.set(Math.cos(se) * Math.cos(sa), Math.sin(se), Math.cos(se) * Math.sin(sa));
   gokMat.uniforms.u_sunDir.value.copy(sunDir);
-  suMat.uniforms.u_sunDir.value.copy(sunDir);
   sunLight.position.copy(sunDir).multiplyScalar(240);
   sunLight.target.position.set(0, 0, 60);
   sunLight.target.updateMatrixWorld();
@@ -516,7 +480,7 @@ function kare(simdi){
     g.pos[1] += Math.sin(g.heading) * g.hiz * hizCarpan * sonDt * 0.35;
     if (g.pos[1] > 125){ g.pos[1] = -70; g.pos[0] = (Math.random() - 0.5) * 80; }
     const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.Y);
-    g.mesh.position.set(g.pos[0], d.heave - 0.45, g.pos[1]);
+    g.mesh.position.set(g.pos[0], d.heave - 0.35, g.pos[1]);
     g.mesh.rotation.order = 'YXZ';
     g.mesh.rotation.y = -g.heading + Math.PI / 2;
     g.mesh.rotation.x = d.pitch;
@@ -525,6 +489,7 @@ function kare(simdi){
   }
 
   suGuncelle(t, yon, P);
+  gokMat.uniforms.u_time.value = t;
   if (kameraModu === 'gemi' && takip){
     const hx = Math.cos(takip.heading), hz = Math.sin(takip.heading);
     const d = gemiDurumu(takip.pos[0], takip.pos[1], takip.heading, t, takip.L, takip.Y);

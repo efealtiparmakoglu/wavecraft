@@ -58,8 +58,8 @@ def main():
     # 5) preset sayisi ve zorunlu alanlar
     presetler = re.findall(r"'[a-zçğıöşü]+':\s*\{dir:", src)
     kapil("5 preset tanımlı", len(presetler) == 5, f"({len(presetler)})")
-    for gerekli in ("u_waveA", "u_waveB", "gokyuzu", "MeshStandardMaterial",
-                    "ACESFilmicToneMapping", "shadowMap"):
+    for gerekli in ("gokyuzu", "MeshStandardMaterial",
+                    "ACESFilmicToneMapping", "shadowMap", "OrbitControls"):
         kapil(f"{gerekli} kullanımda", gerekli in src)
 
     # 6) ses zinciri tam mi (Kaynak -> filtre -> kazanc -> cikis)
@@ -72,7 +72,7 @@ def main():
           os.path.exists(os.path.join(KOK, "vendor", "three.module.js")))
 
     # 7b) Jacobian kopusu shader'da
-    kapil("su displacement shader", "u_time" in src and "wy" in src and "u_amp" in src)
+    kapil("CPU dalga animasyonu", "pos.needsUpdate" in src and "setY" in src)
 
     # 8) GEMI kapisi: heave = 4 ornek ortalamasi, shader'in surekli
     #    y(merkez) degerine yakin olmali
