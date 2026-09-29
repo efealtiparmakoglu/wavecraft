@@ -3,20 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>wavecraft — Gerstner denizi</title>
+<title>wavecraft — Gerstner denizi (three.js)</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #05070d;
                font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #gl { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none; }
-  #gl:active { cursor: grabbing; }
-  .hud { position: fixed; color: #cfe3ff; text-shadow: 0 1px 3px rgba(0,0,0,.85);
+  #gl { display: block; }
+  .hud { position: fixed; color: #cfe3ff; text-shadow: 0 1px 4px rgba(0,0,0,.9);
          user-select: none; pointer-events: none; z-index: 2; }
-  #info { top: 14px; left: 16px; font-size: 12px; line-height: 1.8; opacity: .88; }
+  #info { top: 14px; left: 16px; font-size: 12px; line-height: 1.8; opacity: .9; }
   #info b { color: #ffd27f; }
   #presets { bottom: 18px; left: 50%; transform: translateX(-50%);
              display: flex; gap: 8px; pointer-events: auto; z-index: 3;
              flex-wrap: wrap; justify-content: center; }
-  #presets button { background: rgba(10,18,32,.72); color: #cfe3ff;
+  #presets button { background: rgba(10,18,32,.75); color: #cfe3ff;
     border: 1px solid rgba(140,180,255,.35); border-radius: 20px;
     padding: 8px 16px; font: inherit; font-size: 12px; cursor: pointer;
     backdrop-filter: blur(6px); transition: .15s; }
@@ -24,7 +23,7 @@
   #presets button.on { background: rgba(255,210,127,.15); border-color: #ffd27f;
                       color: #ffe3ae; }
   #hint { bottom: 18px; right: 16px; font-size: 11px; opacity: .55; }
-  #title { top: 14px; right: 16px; font-size: 12px; opacity: .7; text-align: right;
+  #title { top: 14px; right: 16px; font-size: 12px; opacity: .75; text-align: right;
            line-height: 1.7; }
 </style>
 </head>
@@ -34,208 +33,76 @@
 <div class="hud" id="info">
   <div><b>wavecraft</b> — Gerstner denizi · <span id="fps">–</span> fps</div>
   <div id="stat">–</div>
-  <div>sürükle: yön · tekerlek/oklar: hız · tık: ses</div>
+  <div>sürükle: yörünge · tekerlek: yakınlaş · oklar: hız · tık: ses</div>
 </div>
 <div class="hud" id="title">
-  ω = √(g·k) dispersiyon<br>ses: dalga tepelerinden sentezlenir
+  ω = √(g·k) dispersiyon · Jacobian köpüğü<br>ses: dalga tepelerinden sentezlenir
 </div>
 <div class="hud" id="presets"></div>
 <div class="hud" id="hint">ses: <span id="sesDurum">kapalı — tıkla</span></div>
 
-<script>
-window.addEventListener('error', function(e){
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+window.addEventListener('error', e => {
   const f = document.getElementById('fps');
-  if (f) f.textContent = 'HATA: ' + (e.message || e) + ' @' + (e.lineno || '?');
+  if (f) f.textContent = 'HATA: ' + e.message;
 });
-'use strict';
-// =====================================================================
-// wavecraft — tarayıcıda gerçek zamanlı Gerstner okyanus.
-// Fizik ocean-cinema ile aynı:  ω = √(g·k),  y = Σ A·sin(k·d̂·p − ωt + φ)
-// Choppiness: tepe yatay kayması.  Ses: tepelerden filtrelenmiş gürültü.
-// =====================================================================
 
+// =====================================================================
+// wavecraft — PBR tabanlı Gerstner okyanus (three.js)
+// Fizik: ocean-cinema ile aynı — ω = √(g·k), choppiness, Jacobian köpüğü.
+// =====================================================================
 const G = 9.81;
+
 const canvas = document.getElementById('gl');
-const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
-if (!gl) { document.body.innerHTML = '<p style="color:#fff;padding:2rem">' +
-  'Bu demo WebGL2 gerektiriyor.</p>'; throw new Error('webgl2 yok'); }
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-// ---------------------------------------------------------------- shader
-const VS = `#version 300 es
-precision highp float;
-layout(location=0) in vec2 a_grid;   // x: -1..1 yanal, z: 0..1 derinlik
-uniform mat4  u_vp;                  // view-projection
-uniform float u_time, u_chop, u_amp, u_wind;
-uniform vec2  u_dir;
-const int N = 5;
-uniform vec4  u_waveA[N];            // k, omega, dirX, dirZ
-uniform vec4  u_waveB[N];            // A, steep, phase, -
-out vec3 v_world; out vec3 v_normal; out float v_crest; out float v_dist;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.5, 3000);
+camera.position.set(0, 14, -30);
 
-void main(){
-  // sözde-perspektif ızgara: uzak şeritler açılır (ufka sıkışır)
-  float d2 = a_grid.y * a_grid.y;
-  float z  = 2.0 + d2 * 620.0;                  // dünya Z (derinlik)
-  float x  = a_grid.x * (4.0 + d2 * 300.0);     // yanal genişlik
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 2, 120);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.maxPolarAngle = Math.PI * 0.495;
+controls.minDistance = 8;
+controls.maxDistance = 300;
 
-  vec2 p = vec2(x, z);
-  vec2 disp = vec2(0.0), deriv = vec2(0.0);
-  float y = 0.0, crest = 0.0;
-  for (int i = 0; i < N; i++){
-    float k = u_waveA[i].x, om = u_waveA[i].y * u_wind;
-    vec2  wi = u_waveA[i].zw;
-    float A = u_waveB[i].x, stp = u_waveB[i].y, ph = u_waveB[i].z;
-    float f = k * dot(wi, p) - om * u_time + ph;
-    float sf = sin(f), cf = cos(f);
-    y     += A * sf;
-    crest += A * sf;
-    disp  -= u_chop * stp * cf * wi;
-    deriv.x += A * k * wi.x * cf;
-    deriv.y += A * k * wi.y * cf;
-  }
-  p += disp * u_amp;
-  y *= u_amp;
-
-  v_world  = vec3(p.x, y, p.y);
-  v_normal = normalize(vec3(-deriv.x * u_amp, 1.0, -deriv.y * u_amp));
-  v_crest  = crest;
-  v_dist   = a_grid.y;
-  gl_Position = u_vp * vec4(v_world, 1.0);
-}`;
-
-const FS = `#version 300 es
-precision highp float;
-in vec3 v_world; in vec3 v_normal; in float v_crest; in float v_dist;
-uniform vec3 u_cam, u_sun, u_skyTop, u_skyHorizon, u_water;
-uniform float u_time;
-out vec4 frag;
-
-float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-
-void main(){
-  vec3 V = normalize(u_cam - v_world);
-  vec3 N = normalize(v_normal);
-  float fres = mix(0.03, 1.0, pow(1.0 - max(dot(N, V), 0.0), 4.0));
-
-  vec3 R = reflect(-V, N);
-  vec3 sky = mix(u_skyHorizon, u_skyTop, clamp(R.y * 1.4, 0.0, 1.0));
-
-  vec3 L = normalize(u_sun);
-  vec3 H = normalize(L + V);
-  float spec  = pow(max(dot(N, H), 0.0), 240.0) * 2.6;
-  float spark = step(0.9965, hash(floor(v_world.xz * 2.2) + floor(u_time * 9.0))) * 0.35;
-
-  vec3 col = mix(u_water, sky, fres);
-  col += vec3(1.0, 0.92, 0.76) * (spec + spark) * max(0.0, dot(N, L) * 0.5 + 0.5);
-  col = mix(col, vec3(0.9, 0.94, 0.98), smoothstep(0.55, 1.5, v_crest) * 0.22);
-  col = mix(col, u_skyHorizon, smoothstep(0.35, 1.0, v_dist) * 0.85);
-  frag = vec4(pow(col, vec3(0.4545)), 1.0);
-}`;
-
-function derle(tip, src){
-  const s = gl.createShader(tip);
-  gl.shaderSource(s, src); gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    throw new Error('shader: ' + gl.getShaderInfoLog(s));
-  return s;
-}
-const prog = gl.createProgram();
-gl.attachShader(prog, derle(gl.VERTEX_SHADER, VS));
-gl.attachShader(prog, derle(gl.FRAGMENT_SHADER, FS));
-gl.linkProgram(prog);
-if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
-  throw new Error('link: ' + gl.getProgramInfoLog(prog));
-gl.useProgram(prog);
-const U = n => gl.getUniformLocation(prog, n);
-
-// ---------------------------------------------------------------- ızgara
-const NXD = 200, NZD = 170;
-const verts = new Float32Array(NXD * NZD * 2);
-{ let v = 0;
-  for (let j = 0; j < NZD; j++)
-    for (let i = 0; i < NXD; i++){
-      verts[v++] = i / (NXD - 1) * 2 - 1;
-      verts[v++] = j / (NZD - 1);
-    } }
-const idx = new Uint32Array((NXD - 1) * (NZD - 1) * 6);
-{ let e = 0;
-  for (let j = 0; j < NZD - 1; j++)
-    for (let i = 0; i < NXD - 1; i++){
-      const a = j * NXD + i, b = a + 1, c = a + NXD, dd = c + 1;
-      idx[e++] = a; idx[e++] = c; idx[e++] = b;
-      idx[e++] = b; idx[e++] = c; idx[e++] = dd;
-    } }
-const vao = gl.createVertexArray();
-gl.bindVertexArray(vao);
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-gl.enableVertexAttribArray(0);
-gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-const ebo = gl.createBuffer();
-gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-gl.bindVertexArray(null);
-
-// ---------------------------------------------------------------- matrisler
-function persp(fovYdeg, aspect, near, far){
-  const f = 1 / Math.tan(fovYdeg * Math.PI / 360);
-  const nf = 1 / (near - far);
-  return new Float32Array([
-    f / aspect, 0, 0, 0,
-    0, f, 0, 0,
-    0, 0, (far + near) * nf, -1,
-    0, 0, 2 * far * near * nf, 0]);
-}
-function lookAt(eye, at, up){
-  const zx = eye[0]-at[0], zy = eye[1]-at[1], zz = eye[2]-at[2];
-  let l = Math.hypot(zx, zy, zz); const z = [zx/l, zy/l, zz/l];
-  const x = [up[1]*z[2]-up[2]*z[1], up[2]*z[0]-up[0]*z[2], up[0]*z[1]-up[1]*z[0]];
-  l = Math.hypot(...x) || 1; const xx = [x[0]/l, x[1]/l, x[2]/l];
-  const y = [z[1]*xx[2]-z[2]*xx[1], z[2]*xx[0]-z[0]*xx[2], z[0]*xx[1]-z[1]*xx[0]];
-  return new Float32Array([
-    xx[0], y[0], z[0], 0,
-    xx[1], y[1], z[1], 0,
-    xx[2], y[2], z[2], 0,
-    -(xx[0]*eye[0]+xx[1]*eye[1]+xx[2]*eye[2]),
-    -(y[0]*eye[0]+y[1]*eye[1]+y[2]*eye[2]),
-    -(z[0]*eye[0]+z[1]*eye[1]+z[2]*eye[2]), 1]);
-}
-function carp(a, b){
-  const o = new Float32Array(16);
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++){
-    let s = 0;
-    for (let k = 0; k < 4; k++) s += a[k*4+r] * b[c*4+k];
-    o[c*4+r] = s;
-  }
-  return o;
-}
-const KAM = [0, 4.6, -11];
-
-// ---------------------------------------------------------------- preset'ler
+// ------------------------------------------------------------------ preset'ler
 const PRESETS = {
-  'sakin':     {dir:  25, amp: 0.45, chop: 0.35, wind: 0.7,
-                top:[0.10,0.30,0.58], hor:[0.50,0.66,0.78], su:[0.02,0.10,0.16],
-                suAci: 0.9},
-  'firtina':   {dir: 205, amp: 1.75, chop: 1.05, wind: 1.9,
-                top:[0.04,0.06,0.10], hor:[0.15,0.18,0.23], su:[0.015,0.04,0.07],
-                suAci: 0.7},
-  'gunbatimi': {dir: 250, amp: 0.80, chop: 0.55, wind: 0.9,
-                top:[0.22,0.11,0.32], hor:[0.98,0.42,0.22], su:[0.10,0.05,0.12],
-                suAci: 0.25},
-  'ay':        {dir:   0, amp: 0.42, chop: 0.42, wind: 0.6,
-                top:[0.005,0.01,0.04], hor:[0.05,0.09,0.20], su:[0.008,0.02,0.06],
-                suAci: 1.25},
-  'cak':       {dir: 140, amp: 1.10, chop: 0.85, wind: 1.35,
-                top:[0.25,0.36,0.52], hor:[0.78,0.86,0.93], su:[0.06,0.18,0.26],
-                suAci: 1.05},
+  'sakin':     {dir:  25, amp: 0.45, chop: 0.35, wind: 0.7, suAci: 0.9,
+                top:[0.10,0.30,0.58], hor:[0.55,0.70,0.82], su:[0.02,0.12,0.20]},
+  'firtina':   {dir: 205, amp: 1.75, chop: 1.05, wind: 1.9, suAci: 0.6,
+                top:[0.045,0.065,0.105], hor:[0.17,0.20,0.25], su:[0.012,0.035,0.06]},
+  'gunbatimi': {dir: 250, amp: 0.80, chop: 0.55, wind: 0.9, suAci: 0.22,
+                top:[0.24,0.10,0.34], hor:[1.00,0.42,0.20], su:[0.10,0.045,0.10]},
+  'ay':        {dir:   0, amp: 0.42, chop: 0.42, wind: 0.6, suAci: 1.3,
+                top:[0.004,0.008,0.03], hor:[0.05,0.09,0.20], su:[0.006,0.016,0.045]},
+  'cak':       {dir: 140, amp: 1.10, chop: 0.85, wind: 1.35, suAci: 1.05,
+                top:[0.24,0.36,0.54], hor:[0.80,0.88,0.95], su:[0.05,0.20,0.28]},
 };
 let aktif = 'firtina';
 let P = { ...PRESETS[aktif] };
 let yon = P.dir * Math.PI / 180;
 let hizCarpan = 1.0;
-let kameraModu = 'sabit';
-let sonGemiDurum = null;
+let kameraModu = 'serbest';
 
 const PRESET_BTN = document.getElementById('presets');
 for (const k of Object.keys(PRESETS)){
@@ -246,40 +113,350 @@ for (const k of Object.keys(PRESETS)){
     aktif = k; P = { ...PRESETS[k] }; yon = P.dir * Math.PI / 180;
     [...PRESET_BTN.children].forEach(c => c.classList.remove('on'));
     b.classList.add('on');
+    uygunlukGuncelle();
   });
   PRESET_BTN.appendChild(b);
 }
 const MOD_BTN = document.createElement('button');
-MOD_BTN.textContent = 'kamera: sabit';
+MOD_BTN.textContent = '📷 gemi takibi';
 MOD_BTN.addEventListener('click', () => {
-  kameraModu = kameraModu === 'sabit' ? 'gemi' : 'sabit';
-  MOD_BTN.textContent = 'kamera: ' + (kameraModu === 'gemi' ? 'gemi takibi' : 'sabit');
+  kameraModu = kameraModu === 'serbest' ? 'gemi' : 'serbest';
   MOD_BTN.classList.toggle('on', kameraModu === 'gemi');
+  controls.enabled = kameraModu === 'serbest';
 });
 PRESET_BTN.appendChild(MOD_BTN);
 
-// ---------------------------------------------------------------- etkileşim
-let suruklu = false, sonX = 0;
-canvas.addEventListener('pointerdown', e => {
-  suruklu = true; sonX = e.clientX; sesAc();
-});
-addEventListener('pointerup', () => suruklu = false);
-addEventListener('pointermove', e => {
-  if (!suruklu) return;
-  yon += (e.clientX - sonX) * 0.006;
-  sonX = e.clientX;
-});
-addEventListener('wheel', e => {
-  hizCarpan = Math.max(0.2, Math.min(3.2, hizCarpan * (e.deltaY > 0 ? 0.92 : 1.08)));
-}, { passive: true });
-addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft')  yon -= 0.12;
-  if (e.key === 'ArrowRight') yon += 0.12;
-  if (e.key === 'ArrowUp')    hizCarpan = Math.min(3.2, hizCarpan * 1.15);
-  if (e.key === 'ArrowDown')  hizCarpan = Math.max(0.2, hizCarpan / 1.15);
-});
+// ------------------------------------------------------------------ ışık + gökyüzü
+const sunDir = new THREE.Vector3();
+const sunLight = new THREE.DirectionalLight(0xfff2dd, 3.4);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.left = -70; sunLight.shadow.camera.right = 70;
+sunLight.shadow.camera.top = 70;   sunLight.shadow.camera.bottom = -70;
+sunLight.shadow.camera.near = 1;  sunLight.shadow.camera.far = 500;
+sunLight.shadow.bias = -0.0006;
+scene.add(sunLight);
+scene.add(sunLight.target);
+scene.add(new THREE.HemisphereLight(0x9db8e0, 0x1a2530, 0.6));
 
-// ---------------------------------------------------------------- ses
+const GOKYUZU_GLSL = `
+uniform vec3 u_top, u_hor;
+uniform vec3 u_sunDir;
+vec3 gokyuzu(vec3 d){
+  float t = clamp(d.y * 1.6, 0.0, 1.0);
+  vec3 c = mix(u_hor, u_top, pow(t, 0.8));
+  float gunes = pow(max(dot(d, u_sunDir), 0.0), 900.0) * 12.0
+              + pow(max(dot(d, u_sunDir), 0.0), 24.0) * 0.35;
+  return c + vec3(1.0, 0.86, 0.65) * gunes;
+}`;
+
+const gokMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: {
+    u_top: { value: new THREE.Color() },
+    u_hor: { value: new THREE.Color() },
+    u_sunDir: { value: new THREE.Vector3() },
+  },
+  vertexShader: `varying vec3 vDir;
+    void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `precision highp float; varying vec3 vDir;
+    ${GOKYUZU_GLSL}
+    void main(){ gl_FragColor = vec4(gokyuzu(normalize(vDir)), 1.0); }`,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 16), gokMat));
+
+// ------------------------------------------------------------------ okyanus
+const DALGA_SAYISI = 5;
+const TABAN = [
+  { lam: 44,  sap:  0.00, a: 1.00 },
+  { lam: 25,  sap:  0.15, a: 0.64 },
+  { lam: 13,  sap: -0.19, a: 0.40 },
+  { lam: 6.8, sap:  0.30, a: 0.24 },
+  { lam: 3.3, sap: -0.38, a: 0.14 },
+];
+const NXD = 300, NZD = 220, ALAN = 300;
+const suGeo = new THREE.PlaneGeometry(ALAN, ALAN, NXD - 1, NZD - 1);
+suGeo.rotateX(-Math.PI / 2);
+const suMat = new THREE.ShaderMaterial({
+  fog: false,
+  uniforms: {
+    u_time: { value: 0 },
+    u_amp: { value: P.amp },
+    u_chop: { value: P.chop },
+    u_wind: { value: P.wind * hizCarpan },
+    u_kam: { value: new THREE.Vector3() },
+    u_top: { value: new THREE.Color() },
+    u_hor: { value: new THREE.Color() },
+    u_suRenk: { value: new THREE.Color() },
+    u_sunDir: { value: new THREE.Vector3() },
+    u_waveA: { value: Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4()) },
+    u_waveB: { value: Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4()) },
+  },
+  vertexShader: `precision highp float;
+    uniform float u_time, u_amp, u_chop, u_wind;
+    uniform vec4 u_waveA[${DALGA_SAYISI}];
+    uniform vec4 u_waveB[${DALGA_SAYISI}];
+    varying vec3 v_world; varying vec3 v_normal;
+    varying float v_foam, v_sis;
+    void main(){
+      vec3 p = position;
+      vec2 q = p.xz;
+      vec2 disp = vec2(0.0);
+      vec2 dxx = vec2(0.0);
+      float y = 0.0;
+      for (int i = 0; i < ${DALGA_SAYISI}; i++){
+        float k = u_waveA[i].x, om = u_waveA[i].y * u_wind;
+        vec2 wi = u_waveA[i].zw;
+        float A = u_waveB[i].x, stp = u_waveB[i].y, ph = u_waveB[i].z;
+        float f = k * dot(wi, q) - om * u_time + ph;
+        float sf = sin(f), cf = cos(f);
+        y += A * sf;
+        disp -= u_chop * stp * cf * wi;
+        float ak = A * k;
+        dxx += wi * wi * ak * cf;
+      }
+      float J = (1.0 + dxx.x) * (1.0 + dxx.y);
+      v_foam = smoothstep(0.55, 0.05, J);
+      p.xz = q + disp;
+      p.y  = y;
+      v_world = p;
+      v_normal = normalize(vec3(-dxx.x, 1.0, -dxx.y));
+      float d = length(p.xz - cameraPosition.xz);
+      v_sis = smoothstep(80.0, 320.0, d);
+      gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: `precision highp float;
+    uniform vec3 u_kam, u_suRenk, u_sunDir;
+    varying vec3 v_world; varying vec3 v_normal;
+    varying float v_foam, v_sis;
+    ${GOKYUZU_GLSL}
+    void main(){
+      vec3 N = normalize(v_normal);
+      vec3 V = normalize(u_kam - v_world);
+      vec3 L = normalize(u_sunDir);
+      float ndv = max(dot(N, V), 0.0);
+      float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+      vec3 yansima = gokyuzu(normalize(reflect(-V, N)));
+      vec3 H = normalize(L + V);
+      float a = 0.055;
+      float nh = max(dot(N, H), 0.0);
+      float dterm = nh * nh * (a*a - 1.0) + 1.0;
+      float ggx = (a*a) / (3.14159 * dterm * dterm);
+      float spek = ggx * max(dot(N, L), 0.0);
+      float sss = pow(clamp(1.0 - dot(N, L), 0.0, 1.0), 2.0) * 0.35;
+      vec3 renk = mix(u_suRenk, yansima, fres);
+      renk += u_suRenk * sss;
+      renk += vec3(1.0, 0.88, 0.70) * spek * 0.9;
+      renk = mix(renk, vec3(0.85, 0.90, 0.95), v_foam * 0.8);
+      renk = mix(renk, u_hor, v_sis * 0.92);
+      gl_FragColor = vec4(renk, 1.0);
+    }`,
+});
+const su = new THREE.Mesh(suGeo, suMat);
+su.frustumCulled = false;
+scene.add(su);
+
+const A4 = new Float32Array(DALGA_SAYISI * 4);
+const B4 = new Float32Array(DALGA_SAYISI * 4);
+const W4 = Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4());
+const WV4 = Array.from({ length: DALGA_SAYISI }, () => new THREE.Vector4());
+function dalgalariHesapla(yonRad, Pr){
+  TABAN.forEach((t, i) => {
+    const k = 2 * Math.PI / t.lam;
+    A4[i*4] = k; A4[i*4+1] = Math.sqrt(G * k);
+    A4[i*4+2] = Math.cos(yonRad + t.sap); A4[i*4+3] = Math.sin(yonRad + t.sap);
+    B4[i*4] = Pr.amp * t.a;
+    B4[i*4+1] = 0.55 / (k * DALGA_SAYISI);
+    B4[i*4+2] = i * 2.17;
+  });
+  for (let i = 0; i < DALGA_SAYISI; i++){
+    W4[i].set(A4[i*4], A4[i*4+1], A4[i*4+2], A4[i*4+3]);
+    WV4[i].set(B4[i*4], B4[i*4+1], B4[i*4+2], B4[i*4+3]);
+  }
+  return { tepe: B4[0] };
+}
+function uygunlukGuncelle(){
+  dalgalariHesapla(yon, P);
+  for (let i = 0; i < DALGA_SAYISI; i++){
+    suMat.uniforms.u_waveA.value[i].copy(W4[i]);
+    suMat.uniforms.u_waveB.value[i].copy(WV4[i]);
+  }
+  suMat.uniforms.u_amp.value = 1.0;
+  suMat.uniforms.u_chop.value = P.chop;
+  suMat.uniforms.u_wind.value = P.wind * hizCarpan;
+  suMat.uniforms.u_top.value.setRGB(...P.top);
+  suMat.uniforms.u_hor.value.setRGB(...P.hor);
+  suMat.uniforms.u_suRenk.value.setRGB(...P.su);
+  gokMat.uniforms.u_top.value.setRGB(...P.top);
+  gokMat.uniforms.u_hor.value.setRGB(...P.hor);
+  const se = 0.30, sa = yon + P.suAci;
+  sunDir.set(Math.cos(se) * Math.cos(sa), Math.sin(se), Math.cos(se) * Math.sin(sa));
+  gokMat.uniforms.u_sunDir.value.copy(sunDir);
+  suMat.uniforms.u_sunDir.value.copy(sunDir);
+  sunLight.position.copy(sunDir).multiplyScalar(240);
+  sunLight.target.position.set(0, 0, 60);
+  sunLight.target.updateMatrixWorld();
+  scene.fog = new THREE.Fog(new THREE.Color(...P.hor), 140, 430);
+  renderer.setClearColor(new THREE.Color(...P.hor));
+}
+uygunlukGuncelle();
+
+// ------------------------------------------------------------------ gemiler
+function yukseklik(x, z, t, yonR){
+  let y = 0;
+  for (let i = 0; i < DALGA_SAYISI; i++){
+    const k = W4[i].x, om = W4[i].y * (P.wind * hizCarpan);
+    const aci = yonR + TABAN[i].sap;
+    const f = k * (Math.cos(aci) * x + Math.sin(aci) * z) - om * t + i * 2.17;
+    y += B4[i] * Math.sin(f);
+  }
+  return y;
+}
+function gemiDurumu(x, z, yonR, t, L, Y){
+  const hx = Math.cos(yonR), hz = Math.sin(yonR);
+  const o = (a, b) => yukseklik(x + hx * a - hz * b, z + hz * a + hx * b, t, yonR);
+  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, Y), sanc = o(0, -Y);
+  return {
+    heave: (pruva + kic + isk + sanc) / 4,
+    pitch: Math.atan2(pruva - kic, 2 * L),
+    roll:  Math.atan2(sanc - isk, 2 * Y),
+  };
+}
+
+function govdeGBuffer(L, W, D, cHava, cSu, cBant){
+  const pos = [], col = [];
+  const ST = 9, kes = [];
+  for (let i = 0; i < ST; i++){
+    const u = i / (ST - 1);
+    const x = -L/2 + u * L;
+    let w;
+    if (u < 0.22)      w = 0.68 + (u / 0.22) * 0.30;
+    else if (u > 0.66) w = 1.0 - ((u - 0.66) / 0.34) * 0.88;
+    else               w = 0.98 - Math.abs(u - 0.5) * 0.06;
+    const sheer = u * u * 0.14 * D;
+    const d = D/2 * (u > 0.8 ? 1 - (u - 0.8) / 0.2 * 0.45 : 1);
+    kes.push({ x, bw: w * W/2 * 0.62, dw: w * W/2, y0: -d, y1: d * 0.5 + sheer });
+  }
+  const tri = (a, b, c, renk) => {
+    for (const p of [a, b, c]){ pos.push(p[0], p[1], p[2]); col.push(renk[0], renk[1], renk[2]); }
+  };
+  for (let i = 0; i < ST - 1; i++){
+    const A = kes[i], B = kes[i+1];
+    const aL0=[A.x,A.y0,-A.bw], aL1=[A.x,A.y1,-A.dw], bL0=[B.x,B.y0,-B.bw], bL1=[B.x,B.y1,-B.dw];
+    const aR0=[A.x,A.y0, A.bw], aR1=[A.x,A.y1, A.dw], bR0=[B.x,B.y0, B.bw], bR1=[B.x,B.y1, B.dw];
+    const suRenk = A.y1 < 0.02 ? cSu : cHava;
+    tri(aL0,bL0,aL1,suRenk); tri(aL1,bL0,bL1,suRenk);
+    tri(aR0,aR1,bR0,suRenk); tri(aR1,bR1,bR0,suRenk);
+    tri(aL0,aL1,aR1,suRenk); tri(aL0,aR1,aR0,suRenk);
+    tri(aL1,bL1,bR1,cHava); tri(aL1,bR1,aR1,cHava);
+    const f = (k) => A.y0 + (A.y1-A.y0)*k, f2 = (k) => B.y0 + (B.y1-B.y0)*k;
+    tri([A.x,f(.62),-A.dw*1.002],[B.x,f2(.62),-B.dw*1.002],[A.x,f(.80),-A.dw*1.002], cBant);
+    tri([A.x,f(.80),-A.dw*1.002],[B.x,f2(.80),-B.dw*1.002],[B.x,f2(.62),-B.dw*1.002], cBant);
+  }
+  return { pos, col };
+}
+function kutuGBuffer(renk, cx, cy, cz, sx, sy, sz){
+  const pos = [], col = [];
+  const x0=cx-sx/2, x1=cx+sx/2, y0=cy-sy/2, y1=cy+sy/2, z0=cz-sz/2, z1=cz+sz/2;
+  const p = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
+             [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  const f = [0,1,2, 0,2,3, 5,4,7, 5,7,6, 4,0,3, 4,3,7, 1,5,6, 1,6,2, 4,5,1, 4,1,0, 3,2,6, 3,6,7];
+  for (const i of f){ pos.push(p[i][0], p[i][1], p[i][2]); col.push(renk[0], renk[1], renk[2]); }
+  return { pos, col };
+}
+function silindirGBuffer(a, b, r, renk){
+  const pos = [], col = [];
+  const d = new THREE.Vector3(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
+  const l = d.length(); const ez = d.clone().divideScalar(l);
+  const ex = new THREE.Vector3(ez.z, 0, -ez.x);
+  if (ex.length() < 1e-6) ex.set(1, 0, 0);
+  ex.normalize();
+  const ey = new THREE.Vector3().crossVectors(ez, ex);
+  const p = (base, t) => {
+    const v = base.clone().addScaledVector(ex, Math.cos(t) * r).addScaledVector(ey, Math.sin(t) * r);
+    return [v.x, v.y, v.z];
+  };
+  const tri = (a1, b1, c1) => {
+    for (const q of [a1, b1, c1]){ pos.push(q[0], q[1], q[2]); col.push(renk[0], renk[1], renk[2]); }
+  };
+  for (let i = 0; i < 6; i++){
+    const t0 = i/6*Math.PI*2, t1 = (i+1)/6*Math.PI*2;
+    tri(p(a,t0), p(b,t0), p(a,t1));
+    tri(p(a,t1), p(b,t0), p(b,t1));
+  }
+  return { pos, col };
+}
+function gemiGeometry(tip){
+  const L = 26, W = 6.2, D = 5.0;
+  const cHava = tip === 'tanker' ? [0.10,0.11,0.13] : [0.13,0.17,0.22];
+  const cSu = [0.45,0.12,0.07], cBant = [0.03,0.03,0.04];
+  const parcalar = [govdeGBuffer(L, W, D, cHava, cSu, cBant)];
+  const beyaz = [0.80,0.80,0.82], cam = [0.05,0.09,0.13];
+  const kx = -L*0.30;
+  parcalar.push(kutuGBuffer(beyaz, kx, D*0.5+1.1, 0, 4.6, 2.2, 5.2));
+  parcalar.push(kutuGBuffer(beyaz, kx, D*0.5+2.8, 0, 3.8, 1.4, 4.4));
+  parcalar.push(kutuGBuffer(beyaz, kx+0.6, D*0.5+4.1, 0, 2.6, 1.2, 5.8));
+  parcalar.push(kutuGBuffer(cam, kx+0.6, D*0.5+4.1, 0, 2.66, 0.55, 5.86));
+  for (const zs of [-1, 1])
+    parcalar.push(kutuGBuffer(cam, kx+0.6, D*0.5+4.2, zs*2.55, 2.2, 0.5, 0.06));
+  parcalar.push(kutuGBuffer(beyaz, kx-0.4, D*0.5+5.0, 0, 1.6, 0.3, 2.6));
+  parcalar.push(silindirGBuffer([kx-1.4, D*0.5+4.8, 0], [kx-1.4, D*0.5+7.2, 0], 0.06, [0.7,0.7,0.72]));
+  parcalar.push(silindirGBuffer([kx-1.4, D*0.5+6.6, -1.1], [kx-1.4, D*0.5+6.6, 1.1], 0.045, [0.7,0.7,0.72]));
+  parcalar.push(kutuGBuffer([0.85,0.16,0.10], kx-2.6, D*0.5+1.6, 0, 1.6, 3.0, 1.8));
+  parcalar.push(kutuGBuffer([0.05,0.05,0.06], kx-2.6, D*0.5+3.2, 0, 1.7, 0.5, 1.9));
+  if (tip === 'konteyner'){
+    const pal = [[0.55,0.12,0.08],[0.10,0.30,0.50],[0.72,0.52,0.10],
+                 [0.12,0.38,0.22],[0.48,0.48,0.50],[0.35,0.10,0.25],
+                 [0.60,0.25,0.08]];
+    let b = 0;
+    for (let kat = 0; kat < 3; kat++)
+      for (let sira = 0; sira < 4; sira++)
+        for (let bay = 0; bay < 5; bay++){
+          const c = pal[(b * 5 + bay * 3) % pal.length]; b++;
+          parcalar.push(kutuGBuffer(c, -6.5 + bay*2.55, D*0.5+0.7+kat*1.05, -2.1+sira*1.4, 2.4, 1.0, 1.3));
+        }
+    for (const cx of [-4.5, 4.5]){
+      parcalar.push(kutuGBuffer([0.85,0.62,0.10], cx, D*0.5+3.6, -2.4, 0.4, 7.0, 0.4));
+      parcalar.push(kutuGBuffer([0.85,0.62,0.10], cx, D*0.5+3.6,  2.4, 0.4, 7.0, 0.4));
+      parcalar.push(kutuGBuffer([0.85,0.62,0.10], cx, D*0.5+6.9, 0, 0.5, 0.5, 5.6));
+      parcalar.push(kutuGBuffer([0.70,0.50,0.10], cx, D*0.5+4.4, 3.6, 0.35, 0.35, 5.2));
+    }
+  } else if (tip === 'tanker'){
+    parcalar.push(kutuGBuffer([0.30,0.27,0.24], 2.0, D*0.5+0.55, 0, 18, 0.6, 1.4));
+    for (let i = 0; i < 5; i++)
+      parcalar.push(kutuGBuffer([0.22,0.20,0.18], -4+i*3.2, D*0.5+0.35, 0, 1.4, 0.5, 2.8));
+    for (const ys of [-1, 1])
+      parcalar.push(kutuGBuffer([0.45,0.28,0.10], 8.0, D*0.5+0.9, ys*1.9, 0.35, 0.35, 2.4));
+  } else {
+    for (let i = 0; i < 4; i++)
+      parcalar.push(kutuGBuffer([0.42,0.40,0.36], -5+i*4.2, D*0.5+0.5, 0, 3.6, 0.7, 4.6));
+  }
+  parcalar.push(kutuGBuffer([0.95,0.25,0.25], kx+1.3, D*0.5+1.6, W/2*0.9, 0.3, 0.3, 0.2));
+  parcalar.push(kutuGBuffer([0.25,0.95,0.35], kx+1.3, D*0.5+1.6, -W/2*0.9, 0.3, 0.3, 0.2));
+  const pos = [], col = [];
+  for (const pc of parcalar){ pos.push(...pc.pos); col.push(...pc.col); }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const gemiMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, flatShading: true, roughness: 0.72, metalness: 0.08,
+});
+const GEMILER = [
+  { tip: 'konteyner', pos: [-15, 44], hiz: 5.5, L: 13, Y: 3.1, sap: 0.22 },
+  { tip: 'tanker',    pos: [13, 66],  hiz: 4.2, L: 13, Y: 3.1, sap: -0.30 },
+  { tip: 'bulk',      pos: [-4, 100], hiz: 5.0, L: 13, Y: 3.1, sap: 0.10 },
+];
+for (const g of GEMILER){
+  g.mesh = new THREE.Mesh(gemiGeometry(g.tip), gemiMat);
+  g.mesh.castShadow = true;
+  scene.add(g.mesh);
+}
+
+// ------------------------------------------------------------------ ses
 let ac = null, kazanc = null, filtre = null, sesKapali = true;
 function sesAc(){
   if (ac){ ac.resume(); sesKapali = false; return; }
@@ -309,385 +486,69 @@ function sesAc(){
   sesKapali = false;
   document.getElementById('sesDurum').textContent = 'açık';
 }
+canvas.addEventListener('click', () => { if (sesKapali) sesAc(); });
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft')  yon -= 0.12;
+  if (e.key === 'ArrowRight') yon += 0.12;
+  if (e.key === 'ArrowUp')    hizCarpan = Math.min(3.2, hizCarpan * 1.15);
+  if (e.key === 'ArrowDown')  hizCarpan = Math.max(0.2, hizCarpan / 1.15);
+});
 
-// ---------------------------------------------------------------- dalgalar
-const TABAN = [
-  { lam: 44,  sap:  0.00 },
-  { lam: 25,  sap:  0.15 },
-  { lam: 13,  sap: -0.19 },
-  { lam: 6.8, sap:  0.30 },
-  { lam: 3.3, sap: -0.38 },
-];
-const A4 = new Float32Array(20), B4 = new Float32Array(20);
-function dalgalariHesapla(yonRad, P){
-  TABAN.forEach((t, i) => {
-    const k = 2 * Math.PI / t.lam;
-    const om = Math.sqrt(G * k);
-    const aci = yonRad + t.sap;
-    A4[i*4] = k; A4[i*4+1] = om;
-    A4[i*4+2] = Math.cos(aci); A4[i*4+3] = Math.sin(aci);
-    B4[i*4] = P.amp * (1.0 - i * 0.16);        // uzundan kısaya genlik
-    B4[i*4+1] = 0.55 / (k * 5);               // steepness
-    B4[i*4+2] = i * 2.17;                      // faz
-  });
-  return { amax: B4[0] };
-}
-
-// ---------------------------------------------------------------- gemiler
-// Gemi pozisyonu DALGA ALANINDAN: 4 ornek (pruva/kic/iskele/sancak).
-function yukseklik(x, z, t, yonR){
-  let y = 0;
-  for (let i = 0; i < 5; i++){
-    const k = 2 * Math.PI / TABAN[i].lam;
-    const om = Math.sqrt(G * k) * (P.wind * hizCarpan);
-    const aci = yonR + TABAN[i].sap;
-    const f = k * (Math.cos(aci) * x + Math.sin(aci) * z) - om * t + i * 2.17;
-    y += P.amp * (1.0 - i * 0.16) * Math.sin(f);
-  }
-  return y;
-}
-function gemiDurumu(x, z, yonR, t, L, Y){
-  const hx = Math.cos(yonR), hz = Math.sin(yonR);
-  const o = (a, b) => yukseklik(x + hx * a - hz * b, z + hz * a + hx * b, t, yonR);
-  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, Y), sanc = o(0, -Y);
-  return {
-    heave: (pruva + kic + isk + sanc) / 4,
-    pitch: Math.atan2(pruva - kic, 2 * L),
-    roll:  Math.atan2(sanc - isk, 2 * Y),
-  };
-}
-function modelMat4(x, y, z, heading, pitch, roll){
-  const ch = Math.cos(heading), sh = Math.sin(heading);
-  const cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const cr = Math.cos(roll),  sr = Math.sin(roll);
-  return [
-    ch*cr + sh*sp*sr,  cp*sr,            -sh*cr + ch*sp*sr, 0,
-    -ch*sr + sh*sp*cr, cp*cr,            sh*sr + ch*sp*cr,  0,
-    -sh*cp,            -sp,              ch*cp,            0,
-    x, y, z, 1,
-  ];
-}
-
-// --- gemi programi (duz, vertex renkli)
-const SHIP_VS = `#version 300 es
-layout(location=0) in vec3 a_pos;
-layout(location=1) in vec3 a_col;
-uniform mat4 u_vp, u_model;
-out vec3 v_col; out vec3 v_world;
-void main(){
-  vec4 w = u_model * vec4(a_pos, 1.0);
-  v_col = a_col;
-  v_world = w.xyz;
-  gl_Position = u_vp * w;
-}`;
-const SHIP_FS = `#version 300 es
-precision highp float;
-in vec3 v_col; in vec3 v_world;
-uniform vec3 u_cam, u_sun, u_sis;
-out vec4 frag;
-void main(){
-  // duz gölgelendirme: ekran-uzayi turevlerinden gercek yuzey normali
-  vec3 n = normalize(cross(dFdx(v_world), dFdy(v_world)));
-  vec3 V = normalize(u_cam - v_world);
-  if (dot(n, V) < 0.0) n = -n;              // kameraya bakan yuz
-  vec3 L = normalize(u_sun);
-  float dif = max(dot(n, L), 0.0);
-  // gok isigi yukaridan, su yansimasi asagidan
-  float gok = 0.5 + 0.5 * n.y;
-  vec3 isik = vec3(0.26, 0.30, 0.38) * gok + vec3(0.10, 0.09, 0.08) * (1.0 - gok);
-  vec3 col = v_col * (isik + vec3(1.0, 0.95, 0.86) * dif * 0.95);
-  vec3 H = normalize(L + V);
-  col += vec3(1.0, 0.95, 0.86) * pow(max(dot(n, H), 0.0), 48.0) * 0.40;
-  // kenar isigi (rim): siluetleri sudan ayirir
-  float kenar = pow(1.0 - max(dot(n, V), 0.0), 3.0);
-  col += vec3(0.20, 0.26, 0.34) * kenar * 0.35;
-  float dist = length(u_cam.xz - v_world.xz);
-  col = mix(col, u_sis, smoothstep(30.0, 150.0, dist));
-  frag = vec4(pow(col, vec3(0.4545)), 1.0);
-}`;
-const shipProg = gl.createProgram();
-gl.attachShader(shipProg, derle(gl.VERTEX_SHADER, SHIP_VS));
-gl.attachShader(shipProg, derle(gl.FRAGMENT_SHADER, SHIP_FS));
-gl.linkProgram(shipProg);
-if (!gl.getProgramParameter(shipProg, gl.LINK_STATUS))
-  throw new Error('ship link: ' + gl.getProgramInfoLog(shipProg));
-const SU = n => gl.getUniformLocation(shipProg, n);
-
-// --- geometri ilkelleri
-function kutuV(v, renk, cx, cy, cz, sx, sy, sz){
-  const x0 = cx - sx/2, x1 = cx + sx/2, y0 = cy - sy/2, y1 = cy + sy/2,
-        z0 = cz - sz/2, z1 = cz + sz/2;
-  const p = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],
-             [x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
-  const f = [0,1,2, 0,2,3, 5,4,7, 5,7,6, 4,0,3, 4,3,7,
-             1,5,6, 1,6,2, 4,5,1, 4,1,0, 3,2,6, 3,6,7];
-  for (const i of f) v.push(p[i][0], p[i][1], p[i][2], renk[0], renk[1], renk[2]);
-}
-function ucgenV(v, a, b, c, renk){
-  for (const p of [a, b, c]) v.push(p[0], p[1], p[2], renk[0], renk[1], renk[2]);
-}
-
-// --- govde: sivri pruva + dolgun kic profilli tek parca prizma
-function govdeV(v, L, W, D, cHava, cSu, cBant){
-  const ST = 9;
-  const kesisit = [];
-  for (let i = 0; i < ST; i++){
-    const u = i / (ST - 1);
-    const x = -L/2 + u * L;
-    let w;
-    if (u < 0.22)      w = 0.68 + (u / 0.22) * 0.30;      // kic genisler
-    else if (u > 0.66) w = 1.0 - ((u - 0.66) / 0.34) * 0.88; // pruva sivrilir
-    else               w = 0.98 - Math.abs(u - 0.5) * 0.06;
-    const sheer = u * u * 0.14 * D;
-    const d = D/2 * (u > 0.8 ? 1 - (u - 0.8) / 0.2 * 0.45 : 1);
-    kesisit.push({ x, bw: w * W/2 * 0.62, dw: w * W/2,
-                   y0: -d, y1: d * 0.5 + sheer });
-  }
-  for (let i = 0; i < ST - 1; i++){
-    const A = kesisit[i], B = kesisit[i + 1];
-    const aL0 = [A.x, A.y0, -A.bw], aL1 = [A.x, A.y1, -A.dw];
-    const bL0 = [B.x, B.y0, -B.bw], bL1 = [B.x, B.y1, -B.dw];
-    const aR0 = [A.x, A.y0,  A.bw], aR1 = [A.x, A.y1,  A.dw];
-    const bR0 = [B.x, B.y0,  B.bw], bR1 = [B.x, B.y1,  B.dw];
-    const su = A.y1 < 0.02 ? cSu : cHava;                 // su alti kizil
-    ucgenV(v, aL0, bL0, aL1, su);   ucgenV(v, aL1, bL0, bL1, su);  // iskele yan
-    ucgenV(v, aR0, aR1, bR0, su);   ucgenV(v, aR1, bR1, bR0, su);  // sancak yan
-    ucgenV(v, aL0, aL1, aR1, su);   ucgenV(v, aL0, aR1, aR0, su);  // dip
-    ucgenV(v, aL1, bL1, bR1, cHava); ucgenV(v, aL1, bR1, aR1, cHava); // guverte
-    // su hatti bandi
-    const b0 = 0.05, b1 = 0.35;
-    ucgenV(v, [A.x, A.y0 + (A.y1-A.y0)*0.62, -A.dw*1.002],
-              [B.x, B.y0 + (B.y1-B.y0)*0.62, -B.dw*1.002],
-              [A.x, A.y0 + (A.y1-A.y0)*0.80, -A.dw*1.002], cBant);
-    ucgenV(v, [A.x, A.y0 + (A.y1-A.y0)*0.80, -A.dw*1.002],
-              [B.x, B.y0 + (B.y1-B.y0)*0.80, -B.dw*1.002],
-              [B.x, B.y0 + (B.y1-B.y0)*0.62, -B.dw*1.002], cBant);
-  }
-}
-
-function gemiMesh(tip){
-  const v = [];
-  const L = 26, W = 6.2, D = 5.0;
-  const cHava = tip === 'tanker' ? [0.10,0.11,0.13] : [0.13,0.17,0.22];
-  const cSu   = [0.45,0.12,0.07];
-  const cBant = [0.03,0.03,0.04];
-  govdeV(v, L, W, D, cHava, cSu, cBant);
-
-  // kule ust yapisi: 3 kademe + kanat kopru + cam bantlari
-  const beyaz = [0.80,0.80,0.82], cam = [0.06,0.10,0.14];
-  const kx = -L*0.30;
-  kutuV(v, beyaz, kx, D*0.5+1.1, 0, 4.6, 2.2, 5.2);          // A kademe
-  kutuV(v, beyaz, kx, D*0.5+2.8, 0, 3.8, 1.4, 4.4);          // B kademe
-  kutuV(v, beyaz, kx+0.6, D*0.5+4.1, 0, 2.6, 1.2, 5.8);      // kopru (kanatli)
-  kutuV(v, cam,  kx+0.6, D*0.5+4.1, 0, 2.65, 0.5, 5.85);     // on cam
-  for (const zs of [-1, 1])
-    kutuV(v, cam, kx+0.6, D*0.5+4.2, zs*2.55, 2.2, 0.45, 0.05);
-  kutuV(v, beyaz, kx-0.4, D*0.5+5.0, 0, 1.6, 0.25, 2.6);     // anten tasi
-  silindirV(v, [kx-1.4, D*0.5+4.8, 0], [kx-1.4, D*0.5+7.2, 0], 0.05, [0.7,0.7,0.72]);
-  silindirV(v, [kx-1.4, D*0.5+6.6, -1.1], [kx-1.4, D*0.5+6.6, 1.1], 0.04, [0.7,0.7,0.72]);
-
-  // baca: eğik üst
-  kutuV(v, [0.80,0.14,0.10], kx-2.6, D*0.5+1.6, 0, 1.6, 3.0, 1.8);
-  kutuV(v, [0.05,0.05,0.06], kx-2.6, D*0.5+3.2, 0, 1.7, 0.5, 1.9);
-
-  if (tip === 'konteyner'){
-    const pal = [[0.55,0.12,0.08],[0.10,0.30,0.50],[0.72,0.52,0.10],
-                 [0.12,0.38,0.22],[0.48,0.48,0.50],[0.35,0.10,0.25],
-                 [0.60,0.25,0.08]];
-    let b = 0;
-    for (let kat = 0; kat < 3; kat++)
-      for (let sira = 0; sira < 4; sira++)
-        for (let bay = 0; bay < 5; bay++){
-          const c = pal[(b * 5 + bay * 3) % pal.length]; b++;
-          kutuV(v, c, -6.5 + bay * 2.55, D*0.5 + 0.7 + kat * 1.05, -2.1 + sira * 1.4,
-                2.4, 1.0, 1.3);
-        }
-    // portal vincler (2 adet): bacak + bom
-    for (const cx of [-4.5, 4.5]){
-      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6, -2.4, 0.4, 7.0, 0.4);
-      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 3.6,  2.4, 0.4, 7.0, 0.4);
-      kutuV(v, [0.85,0.62,0.10], cx, D*0.5 + 6.9, 0, 0.5, 0.5, 5.6);
-      kutuV(v, [0.70,0.50,0.10], cx, D*0.5 + 4.4, 3.6, 0.35, 0.35, 5.2); // bom
-    }
-  } else if (tip === 'tanker'){
-    kutuV(v, [0.30,0.27,0.24], 2.0, D*0.5 + 0.55, 0, 18, 0.6, 1.4);   // boru hatti
-    for (let i = 0; i < 5; i++)
-      kutuV(v, [0.22,0.20,0.18], -4 + i * 3.2, D*0.5 + 0.35, 0, 1.4, 0.5, 2.8);
-    for (const ys of [-1, 1])                                       // manifold kollari
-      kutuV(v, [0.45,0.28,0.10], 8.0, D*0.5 + 0.9, ys*1.9, 0.35, 0.35, 2.4);
-  } else { // bulk carrier: kapaklar
-    for (let i = 0; i < 4; i++)
-      kutuV(v, [0.42,0.40,0.36], -5 + i * 4.2, D*0.5 + 0.5, 0, 3.6, 0.7, 4.6);
-  }
-
-  // kic isiklari + direkler
-  silindirV(v, [kx, D*0.5 + 6.0, 0], [kx, D*0.5 + 8.6, 0], 0.05, [0.75,0.75,0.78]);
-  kutuV(v, [0.95,0.25,0.25], kx+1.3, D*0.5 + 1.6, W/2*0.9, 0.3, 0.3, 0.2);
-  kutuV(v, [0.25,0.95,0.35], kx+1.3, D*0.5 + 1.6, -W/2*0.9, 0.3, 0.3, 0.2);
-  return new Float32Array(v);
-}
-function silindirV(v, a, b, r, renk){
-  const d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
-  const l = Math.hypot(...d);
-  const ez = d.map(x => x / l);
-  let ex = [ez[2], 0, -ez[0]];
-  const el2 = Math.hypot(...ex) || 1; ex = ex.map(x => x/el2);
-  const ey = [ez[1]*ex[2]-ez[2]*ex[1], ez[2]*ex[0]-ez[0]*ex[2], ez[0]*ex[1]-ez[1]*ex[0]];
-  for (let i = 0; i < 6; i++){
-    const t0 = i/6*Math.PI*2, t1 = (i+1)/6*Math.PI*2;
-    const p = (base, t) => [base[0] + (ex[0]*Math.cos(t) + ey[0]*Math.sin(t))*r,
-                             base[1] + (ex[1]*Math.cos(t) + ey[1]*Math.sin(t))*r,
-                             base[2] + (ex[2]*Math.cos(t) + ey[2]*Math.sin(t))*r];
-    ucgenV(v, p(a,t0), p(b,t0), p(a,t1), renk);
-    ucgenV(v, p(a,t1), p(b,t0), p(b,t1), renk);
-  }
-}
-function meshOlustur(veri){
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  const b = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, b);
-  gl.bufferData(gl.ARRAY_BUFFER, veri, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
-  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
-  gl.bindVertexArray(null);
-  return { vao, vbo: b, sayi: veri.length / 6, geriAl: veri.slice() };
-}
-const GEMILER = [
-  { mesh: meshOlustur(gemiMesh('konteyner')), pos: [-15, 44], hiz: 5.5, L: 13, Y: 3.1, sap: 0.22 },
-  { mesh: meshOlustur(gemiMesh('tanker')),    pos: [13, 66],  hiz: 4.2, L: 13, Y: 3.1, sap: -0.30 },
-  { mesh: meshOlustur(gemiMesh('bulk')),      pos: [-4, 100], hiz: 5.0, L: 13, Y: 3.1, sap: 0.10 },
-];
-function gemilerIlerlet(dt){
-  for (const g of GEMILER){
-    g.heading = yon + g.sap;
-    g.pos[0] += Math.cos(g.heading) * g.hiz * hizCarpan * dt * 0.35;
-    g.pos[1] += Math.sin(g.heading) * g.hiz * hizCarpan * dt * 0.35;
-    if (g.pos[1] > 240){ g.pos[1] = -20; g.pos[0] = (Math.random() - 0.5) * 130; }
-  }
-}
-
-// kuyruk (wake): 5 segment, gemi arkasinda, dalgayi izler
-const WAKE_N = 5;
-const wakeVeri = new Float32Array(WAKE_N * 6 * 6);
-const wakeMesh = meshOlustur(wakeVeri);
-function kuyrukuGuncelle(g, t){
-  const hx = Math.cos(g.heading), hz = Math.sin(g.heading);
-  const veri = wakeMesh.geriAl;
-  let o = 0;
-  for (let i = 0; i < WAKE_N; i++){
-    const d0 = 2.5 + i * 2.0, d1 = d0 + 2.0;
-    const g0 = 0.7 + i * 0.22, g1 = g0 + 0.22;
-    const p = (d, yan) => {
-      const x = g.pos[0] - hx * d - hz * yan;
-      const z = g.pos[1] - hz * d + hx * yan;
-      return [x, yukseklik(x, z, t, yon) + 0.06, z];
-    };
-    const a = p(d0, g0), b = p(d0, -g0), c = p(d1, g1), d = p(d1, -g1);
-    const f = 1 - i / WAKE_N * 0.45;
-    const col = [P.su[0] + (0.92 - P.su[0]) * f,
-                 P.su[1] + (0.95 - P.su[1]) * f,
-                 P.su[2] + (0.98 - P.su[2]) * f];
-    for (const v of [a, b, c, b, d, c]){
-      veri[o++] = v[0]; veri[o++] = v[1]; veri[o++] = v[2];
-      veri[o++] = col[0]; veri[o++] = col[1]; veri[o++] = col[2];
-    }
-  }
-  gl.bindBuffer(gl.ARRAY_BUFFER, wakeMesh.vbo);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, veri);
-}
-
-// ---------------------------------------------------------------- döngü
-function boyutla(){
-  const dpr = Math.min(devicePixelRatio || 1, 2);
-  canvas.width = Math.max(1, innerWidth * dpr);
-  canvas.height = Math.max(1, innerHeight * dpr);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-}
-addEventListener('resize', boyutla); boyutla();
+// ------------------------------------------------------------------ döngü
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
 
 const baslangic = performance.now();
-let sonKare = baslangic, sonZaman = baslangic, tepeOrt = 0, fpsOrt = 60;
+let sonKare = baslangic, tepeOrt = 0, fpsOrt = 60, sonDt = 0.016;
 function kare(simdi){
   const t = (simdi - baslangic) / 1000;
-  dalgalariHesapla(yon, P);
+  sonDt = Math.min(0.05, (simdi - sonKare) / 1000 + sonDt);
+  const { tepe } = dalgalariHesapla(yon, P);
+  suMat.uniforms.u_time.value = t;
+  suMat.uniforms.u_kam.value.copy(camera.position);
+  suMat.uniforms.u_wind.value = P.wind * hizCarpan;
 
-  let proj, view;
-  if (kameraModu === 'gemi' && sonGemiDurum){
-    const g = sonGemiDurum;
-    const hx = Math.cos(g.heading), hz = Math.sin(g.heading);
-    proj = persp(62, canvas.width / canvas.height, 0.1, 2000);
-    view = lookAt([g.pos[0] - hx * 24, g.durum.heave + 7, g.pos[1] - hz * 24],
-                  [g.pos[0] + hx * 15, g.durum.heave + 1, g.pos[1] + hz * 15],
-                  [0, 1, 0]);
-  } else {
-    proj = persp(62, canvas.width / canvas.height, 0.1, 2000);
-    view = lookAt(KAM, [0, 1.4, 120], [0, 1, 0]);
-  }
-  const vp = carp(proj, view);
-
-  gl.uniformMatrix4fv(U('u_vp'), false, vp);
-  gl.uniform1f(U('u_time'), t);
-  gl.uniform1f(U('u_amp'), 1.0);
-  gl.uniform1f(U('u_chop'), P.chop);
-  gl.uniform1f(U('u_wind'), P.wind * hizCarpan);
-  gl.uniform2f(U('u_dir'), Math.cos(yon), Math.sin(yon));
-  gl.uniform4fv(U('u_waveA[0]'), A4);
-  gl.uniform4fv(U('u_waveB[0]'), B4);
-  gl.uniform3f(U('u_cam'), KAM[0], KAM[1], KAM[2]);
-  const sa = yon + P.suAci, se = 0.30;
-  gl.uniform3f(U('u_sun'), Math.cos(se)*Math.cos(sa), Math.sin(se),
-               Math.cos(se)*Math.sin(sa));
-  gl.uniform3fv(U('u_skyTop'), P.top);
-  gl.uniform3fv(U('u_skyHorizon'), P.hor);
-  gl.uniform3fv(U('u_water'), P.su);
-
-  gl.bindVertexArray(vao);
-  gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_INT, 0);
-  gl.bindVertexArray(null);
-
-  // --- gemiler: dalga alanindan heave/pitch/roll + kuyruk
-  gl.useProgram(shipProg);
-  gl.uniformMatrix4fv(SU('u_vp'), false, vp);
-  gl.uniform3f(SU('u_cam'), KAM[0], KAM[1], KAM[2]);
-  gl.uniform3f(SU('u_sun'), Math.cos(se) * Math.cos(sa), Math.sin(se),
-               Math.cos(se) * Math.sin(sa));
-  gl.uniform3fv(SU('u_sis'), P.hor);
-  let takipGemi = null;
-  gemilerIlerlet(Math.min(0.05, (simdi - sonZaman) / 1000));
+  let takip = null;
   for (const g of GEMILER){
+    g.heading = yon + g.sap;
+    g.pos[0] += Math.cos(g.heading) * g.hiz * hizCarpan * sonDt * 0.35;
+    g.pos[1] += Math.sin(g.heading) * g.hiz * hizCarpan * sonDt * 0.35;
+    if (g.pos[1] > 240){ g.pos[1] = -20; g.pos[0] = (Math.random() - 0.5) * 130; }
     const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.Y);
-    g.durum = d;
-    gl.uniformMatrix4fv(SU('u_model'), false,
-      modelMat4(g.pos[0], d.heave, g.pos[1], g.heading, d.pitch, d.roll));
-    gl.bindVertexArray(g.mesh.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, g.mesh.sayi);
-    gl.bindVertexArray(null);
-    kuyrukuGuncelle(g, t);
-    gl.uniformMatrix4fv(SU('u_model'), false,
-      new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]));
-    gl.bindVertexArray(wakeMesh.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, wakeMesh.sayi);
-    gl.bindVertexArray(null);
-    if (!takipGemi) takipGemi = g;
+    g.mesh.position.set(g.pos[0], d.heave, g.pos[1]);
+    g.mesh.rotation.order = 'YXZ';
+    g.mesh.rotation.y = -g.heading + Math.PI / 2;
+    g.mesh.rotation.x = d.pitch;
+    g.mesh.rotation.z = d.roll;
+    if (!takip) takip = g;
   }
-  gl.useProgram(prog);
-  sonGemiDurum = takipGemi;
-  sonZaman = simdi;
 
-  // ses: ortalama tepe yüksekliği → kazanç + filtre kesimi
-  tepeOrt += (Math.abs(B4[0]) - tepeOrt) * 0.05;
+  if (kameraModu === 'gemi' && takip){
+    const hx = Math.cos(takip.heading), hz = Math.sin(takip.heading);
+    const d = gemiDurumu(takip.pos[0], takip.pos[1], takip.heading, t, takip.L, takip.Y);
+    camera.position.set(takip.pos[0] - hx * 32, d.heave + 10, takip.pos[1] - hz * 32);
+    camera.lookAt(takip.pos[0] + hx * 12, d.heave + 2, takip.pos[1] + hz * 12);
+  } else {
+    controls.update();
+  }
+
+  tepeOrt += (Math.abs(tepe) - tepeOrt) * 0.05;
   if (ac && kazanc){
     const hedef = Math.min(0.5, 0.05 + tepeOrt * 0.5);
     kazanc.gain.value += (hedef - kazanc.gain.value) * 0.07;
     filtre.frequency.value = 350 + tepeOrt * 850;
   }
 
+  renderer.render(scene, camera);
+
   if (simdi - sonKare > 400){
     fpsOrt = fpsOrt * 0.5 + (1000 / (simdi - sonKare) * 4) * 0.5;
     document.getElementById('fps').textContent = Math.round(fpsOrt);
     document.getElementById('stat').textContent =
-      `5 dalga · tepe ${Math.abs(B4[0]).toFixed(2)} m · hız ${(P.wind*hizCarpan).toFixed(1)}×`;
+      `5 dalga · tepe ${Math.abs(tepe).toFixed(2)} m · hız ${(P.wind*hizCarpan).toFixed(1)}×`;
     sonKare = simdi;
   }
   requestAnimationFrame(kare);

@@ -56,18 +56,23 @@ def main():
     kapil("chop < 1 → örgü kaymaz", max_disp < 1.0, f"(max {max_disp:.2f})")
 
     # 5) preset sayisi ve zorunlu alanlar
-    presetler = re.findall(r"^\s+'[a-zçğıöşü]+':\s*\{dir:", src, re.M)
+    presetler = re.findall(r"'[a-zçğıöşü]+':\s*\{dir:", src)
     kapil("5 preset tanımlı", len(presetler) == 5, f"({len(presetler)})")
-    for gerekli in ("u_vp", "u_waveA[0]", "u_waveB[0]", "u_skyHorizon"):
-        kapil(f"uniform {gerekli} shader'da", gerekli in src)
+    for gerekli in ("u_waveA", "u_waveB", "gokyuzu", "MeshStandardMaterial",
+                    "ACESFilmicToneMapping", "shadowMap"):
+        kapil(f"{gerekli} kullanımda", gerekli in src)
 
     # 6) ses zinciri tam mi (Kaynak -> filtre -> kazanc -> cikis)
     zincir = all(x in src for x in ("createBiquadFilter", "kazanc.gain.value",
                                    "src.start()"))
     kapil("ses zinciri kuruluyor", zincir)
 
-    # 7) WebGL2 ve VAO (WebGL1'de calismaz)
-    kapil("WebGL2 + VAO", "webgl2" in src and "createVertexArray" in src)
+    # 7) three.js yerel olarak vendor'lanmis (deterministik, CDN yok)
+    kapil("three.js vendor'lu", "vendor/three.module.js" in src and
+          os.path.exists(os.path.join(KOK, "vendor", "three.module.js")))
+
+    # 7b) Jacobian kopusu shader'da
+    kapil("Jacobian kopusu", "dxx" in src and "v_foam" in src and "smoothstep(0.55, 0.05, J)" in src)
 
     # 8) GEMI kapisi: heave = 4 ornek ortalamasi, shader'in surekli
     #    y(merkez) degerine yakin olmali
