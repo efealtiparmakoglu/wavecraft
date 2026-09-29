@@ -347,11 +347,17 @@ function yukseklik(x, z, t, yonR){
 function gemiDurumu(x, z, yonR, t, L, Y){
   const hx = Math.cos(yonR), hz = Math.sin(yonR);
   const o = (a, b) => yukseklik(x + hx * a - hz * b, z + hz * a + hx * b, t, yonR);
-  const pruva = o(L, 0), kic = o(-L, 0), isk = o(0, Y), sanc = o(0, -Y);
+  // 9 nokta: pruva/orta/kic x iskele/merkez/sancak — 4 nokta uzeri yetersiz,
+  // gemi tepe uzerine gelince taban havada kaliyordu ("uçan gemi")
+  const pruva = o(L, 0), orta = o(0, 0), kic = o(-L, 0);
+  const iskO = o(0.5 * L, Y), sancO = o(-0.5 * L, Y);
+  const iskS = o(0.5 * L, -Y), sancS = o(-0.5 * L, -Y);
+  const yatayOrtalama = (pruva + orta + kic) / 3;
+  const yanalOrtalama = (iskO + sancO + iskS + sancS) / 4;
   return {
-    heave: (pruva + kic + isk + sanc) / 4,
+    heave: (yatayOrtalama * 3 + yanalOrtalama * 2) / 5,
     pitch: Math.atan2(pruva - kic, 2 * L),
-    roll:  Math.atan2(sanc - isk, 2 * Y),
+    roll:  Math.atan2(sancO + sancS - iskO - iskS, 4 * Y),
   };
 }
 
@@ -551,9 +557,9 @@ function kare(simdi){
     g.heading = yon + g.sap;
     g.pos[0] += Math.cos(g.heading) * g.hiz * hizCarpan * sonDt * 0.35;
     g.pos[1] += Math.sin(g.heading) * g.hiz * hizCarpan * sonDt * 0.35;
-    if (g.pos[1] > 240){ g.pos[1] = -20; g.pos[0] = (Math.random() - 0.5) * 130; }
+    if (g.pos[1] > 125){ g.pos[1] = -70; g.pos[0] = (Math.random() - 0.5) * 80; }
     const d = gemiDurumu(g.pos[0], g.pos[1], g.heading, t, g.L, g.Y);
-    g.mesh.position.set(g.pos[0], d.heave, g.pos[1]);
+    g.mesh.position.set(g.pos[0], d.heave - 0.45, g.pos[1]);
     g.mesh.rotation.order = 'YXZ';
     g.mesh.rotation.y = -g.heading + Math.PI / 2;
     g.mesh.rotation.x = d.pitch;
@@ -564,7 +570,7 @@ function kare(simdi){
   if (kameraModu === 'gemi' && takip){
     const hx = Math.cos(takip.heading), hz = Math.sin(takip.heading);
     const d = gemiDurumu(takip.pos[0], takip.pos[1], takip.heading, t, takip.L, takip.Y);
-    camera.position.set(takip.pos[0] - hx * 32, d.heave + 10, takip.pos[1] - hz * 32);
+    camera.position.set(takip.pos[0] - hx * 32, d.heave + 9.5, takip.pos[1] - hz * 32);
     camera.lookAt(takip.pos[0] + hx * 12, d.heave + 2, takip.pos[1] + hz * 12);
   } else {
     controls.update();
