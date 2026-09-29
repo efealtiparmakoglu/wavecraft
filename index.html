@@ -214,19 +214,19 @@ const KAM = [0, 4.6, -11];
 
 // ---------------------------------------------------------------- preset'ler
 const PRESETS = {
-  'sakin':     {dir:  25, amp: 0.30, chop: 0.30, wind: 0.7,
+  'sakin':     {dir:  25, amp: 0.45, chop: 0.35, wind: 0.7,
                 top:[0.10,0.30,0.58], hor:[0.50,0.66,0.78], su:[0.02,0.10,0.16],
                 suAci: 0.9},
-  'firtina':   {dir: 205, amp: 1.05, chop: 0.95, wind: 1.9,
+  'firtina':   {dir: 205, amp: 1.75, chop: 1.05, wind: 1.9,
                 top:[0.04,0.06,0.10], hor:[0.15,0.18,0.23], su:[0.015,0.04,0.07],
                 suAci: 0.7},
-  'gunbatimi': {dir: 250, amp: 0.52, chop: 0.50, wind: 0.9,
+  'gunbatimi': {dir: 250, amp: 0.80, chop: 0.55, wind: 0.9,
                 top:[0.22,0.11,0.32], hor:[0.98,0.42,0.22], su:[0.10,0.05,0.12],
                 suAci: 0.25},
-  'ay':        {dir:   0, amp: 0.26, chop: 0.38, wind: 0.6,
+  'ay':        {dir:   0, amp: 0.42, chop: 0.42, wind: 0.6,
                 top:[0.005,0.01,0.04], hor:[0.05,0.09,0.20], su:[0.008,0.02,0.06],
                 suAci: 1.25},
-  'cak':       {dir: 140, amp: 0.80, chop: 0.78, wind: 1.35,
+  'cak':       {dir: 140, amp: 1.10, chop: 0.85, wind: 1.35,
                 top:[0.25,0.36,0.52], hor:[0.78,0.86,0.93], su:[0.06,0.18,0.26],
                 suAci: 1.05},
 };
@@ -312,11 +312,11 @@ function sesAc(){
 
 // ---------------------------------------------------------------- dalgalar
 const TABAN = [
-  { lam: 36,  sap:  0.00 },
-  { lam: 20,  sap:  0.16 },
-  { lam: 10.5, sap: -0.20 },
-  { lam: 5.6, sap:  0.32 },
-  { lam: 2.9, sap: -0.40 },
+  { lam: 44,  sap:  0.00 },
+  { lam: 25,  sap:  0.15 },
+  { lam: 13,  sap: -0.19 },
+  { lam: 6.8, sap:  0.30 },
+  { lam: 3.3, sap: -0.38 },
 ];
 const A4 = new Float32Array(20), B4 = new Float32Array(20);
 function dalgalariHesapla(yonRad, P){
@@ -373,21 +373,37 @@ const SHIP_VS = `#version 300 es
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec3 a_col;
 uniform mat4 u_vp, u_model;
-out vec3 v_col; out float v_ny;
+out vec3 v_col; out vec3 v_world;
 void main(){
   vec4 w = u_model * vec4(a_pos, 1.0);
   v_col = a_col;
-  v_ny = (u_model * vec4(normalize(a_pos + vec3(0.0, 0.7, 0.0)), 0.0)).y;
+  v_world = w.xyz;
   gl_Position = u_vp * w;
 }`;
 const SHIP_FS = `#version 300 es
 precision highp float;
-in vec3 v_col; in float v_ny;
-uniform float u_amb;
+in vec3 v_col; in vec3 v_world;
+uniform vec3 u_cam, u_sun, u_sis;
 out vec4 frag;
 void main(){
-  float isik = clamp(v_ny, 0.0, 1.0);
-  frag = vec4(pow(v_col * (u_amb + (1.0 - u_amb) * isik), vec3(0.4545)), 1.0);
+  // duz gölgelendirme: ekran-uzayi turevlerinden gercek yuzey normali
+  vec3 n = normalize(cross(dFdx(v_world), dFdy(v_world)));
+  vec3 V = normalize(u_cam - v_world);
+  if (dot(n, V) < 0.0) n = -n;              // kameraya bakan yuz
+  vec3 L = normalize(u_sun);
+  float dif = max(dot(n, L), 0.0);
+  // gok isigi yukaridan, su yansimasi asagidan
+  float gok = 0.5 + 0.5 * n.y;
+  vec3 isik = vec3(0.26, 0.30, 0.38) * gok + vec3(0.10, 0.09, 0.08) * (1.0 - gok);
+  vec3 col = v_col * (isik + vec3(1.0, 0.95, 0.86) * dif * 0.95);
+  vec3 H = normalize(L + V);
+  col += vec3(1.0, 0.95, 0.86) * pow(max(dot(n, H), 0.0), 48.0) * 0.40;
+  // kenar isigi (rim): siluetleri sudan ayirir
+  float kenar = pow(1.0 - max(dot(n, V), 0.0), 3.0);
+  col += vec3(0.20, 0.26, 0.34) * kenar * 0.35;
+  float dist = length(u_cam.xz - v_world.xz);
+  col = mix(col, u_sis, smoothstep(30.0, 150.0, dist));
+  frag = vec4(pow(col, vec3(0.4545)), 1.0);
 }`;
 const shipProg = gl.createProgram();
 gl.attachShader(shipProg, derle(gl.VERTEX_SHADER, SHIP_VS));
@@ -633,7 +649,10 @@ function kare(simdi){
   // --- gemiler: dalga alanindan heave/pitch/roll + kuyruk
   gl.useProgram(shipProg);
   gl.uniformMatrix4fv(SU('u_vp'), false, vp);
-  gl.uniform1f(SU('u_amb'), 0.45);
+  gl.uniform3f(SU('u_cam'), KAM[0], KAM[1], KAM[2]);
+  gl.uniform3f(SU('u_sun'), Math.cos(se) * Math.cos(sa), Math.sin(se),
+               Math.cos(se) * Math.sin(sa));
+  gl.uniform3fv(SU('u_sis'), P.hor);
   let takipGemi = null;
   gemilerIlerlet(Math.min(0.05, (simdi - sonZaman) / 1000));
   for (const g of GEMILER){

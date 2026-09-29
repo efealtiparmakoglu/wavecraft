@@ -13,7 +13,7 @@ G = 9.81
 KOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HTML = os.path.join(KOK, "index.html")
 
-TABAN = [(36.0, 0.0), (20.0, 0.16), (10.5, -0.20), (5.6, 0.32), (2.9, -0.40)]
+TABAN = [(44.0, 0.0), (25.0, 0.15), (13.0, -0.19), (6.8, 0.30), (3.3, -0.38)]
 
 
 def main():
