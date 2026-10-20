@@ -1,58 +1,81 @@
-# 🌊 wavecraft
+# 🌊 Wavecraft
 
-**EN:** A **real-time Gerstner ocean in your browser** — now rendered with **three.js** (vendored locally, no CDN): PBR standard materials, real directional light + **shadow maps**, **ACES filmic tone mapping**, procedural sky dome, and a water shader with **Fresnel-weighted sky reflection, GGX sun glitter, subsurface shimmer and Jacobian-driven foam** (whitecaps appear where the Gerstner displacement actually compresses the surface). Orbit camera, chase-cam, drifting ships with real heave/pitch/roll. — the same physics the `ocean-cinema`/`ship-cinema` repos render in Cycles, running at 60 fps in a fragment shader: deep-water dispersion **ω = √(g·k)** per wave train, choppiness, analytic normals, fresnel sky reflection and sun glitter. And it **sounds** like the sea it draws: filtered noise whose gain and cutoff follow the live wave-crest amplitude (Web Audio). Drag to turn the swell, wheel/arrows for wind speed, click for sound. Zero dependencies, one HTML file.
+[![CI](https://github.com/efealtiparmakoglu/wavecraft/actions/workflows/ci.yml/badge.svg)](https://github.com/efealtiparmakoglu/wavecraft/actions/workflows/ci.yml)
 
-**TR:** Tarayıcında **gerçek zamanlı Gerstner denizi** — ocean-cinema/ship-cinema'nın Cycles'te render ettiği fizik şimdi shader'da 60 fps: dalga trenlerine göre derin su dispersiyonu **ω = √(g·k)**, choppiness, analitik normal'ler, fresnel gök yansıması ve güneş glitter'ı. Ve **deniz gibi duyuyor**: kazancı ve filtre kesimi canlı tepe yüksekliğini takip eden filtrelenmiş gürültü (Web Audio). Sürükle: yön · tekerlek/oklar: hız · tık: ses. Sıfır bağımlılık, tek HTML dosyası.
+**[Open the live ocean →](https://efealtiparmakoglu.github.io/wavecraft/)**
 
-## ✨ Demo
+**EN:** An interactive ocean with five Gerstner-style wave trains, floating ships and synthesized sea sound. Three.js renders the scene with shadow maps and ACES tone mapping. The wave field drives ship heave, pitch and roll, as well as the Web Audio gain and filter.
 
-**Canlı: [efealtiparmakoglu.github.io/wavecraft](https://efealtiparmakoglu.github.io/wavecraft)** · yerelde: `open index.html`
+**TR:** Beş Gerstner dalga treni, dalgalarda yüzen gemiler ve sentezlenen deniz sesiyle etkileşimli bir okyanus. Three.js sahneyi gölgeler ve ACES ton eşlemesiyle çizer. Dalga alanı gemilerin yüksekliğini, eğimini ve yalpasını; Web Audio kazanç ve filtre değerlerini besler.
 
-## 🚢 Gerçek zamanlı gemiler
+## Run locally / Yerelde çalıştır
 
-Üç gemi — **konteyner** (portal vinçli), **tanker** (boru hattı + manifold) ve **bulk carrier** — **dalga alanının içinde** yüzer: her karede pruva/kıç/iskele/sancak olmak üzere 4 nokta örneklenir, gövde ortalama yükseklikte (heave) durur ve **dalga eğiminden pitch + yanal farktan roll** alır — ship-cinema'daki 3B mantığın 60 fps'lik hali.
-Gövdeler kutu yığını değil: **sivri pruva + dolgun kıç profilli tek parça prizma**, kırmızı antifouling + siyah su hattı bandı, 3 kademeli kule üst yapı, kanat köprüsü ve cam bantları, direkler, kıç ışıkları. Gemiler **yürür** (dalga yönünde ~2 m/s) ve görüş alanını geçince sarmalanır; kuyruk izleri dalgayı örnekleyerek arkaya seriliyor. **📷 kamera** düğmesiyle geminin peşinden kovalayabilirsin.
+Clone the repository, then run this command **from its root**:
 
-## 🎛️ Preset'ler
-
-| preset | ruh hali |
-|---|---|
-| `sakin` | tropikal sabah, üç nazik dalga |
-| `firtina` | beş dalga, koyu su, yüksek choppiness |
-| `gunbatimi` | alçak turuncu güneş, uzun glitter yolu |
-| `ay` | gece, gümüş tepeler, sönük ışık |
-| `cak` | parlak öğle, berrak turkuaz |
-
-## 🧱 Physics / Fizik
-
-| Piece | Detail |
-|---|---|
-| 🌊 Dalgalar | 5 train: λ 36→2.9 m, her biri kendi ω = √(g·k) ile |
-| ↔️ Choppiness | tepe yatay kayması `disp −= chop·steep·cos(f)·d̂` |
-| 🧮 Normal | fragment öncesi analitik türevlerden (türev hesabı shader'da) |
-| 🔊 Ses | beyaz+kahve gürültü → lowpass + bandpass "sıçrama"; kazanç ∝ tepe genliği |
-
-## ✅ Verification / Doğrulama
-
-```bash
-python3 tests/verify.py
-node --check <(script bloğu)   # JS sözdizimi
+```sh
+git clone https://github.com/efealtiparmakoglu/wavecraft.git
+cd wavecraft
+python3 -m http.server 8000
 ```
 
-- **Dispersion gate**: ω strictly increases as λ shrinks (1.31 → 4.61 rad/s)
-- **Wave-number gate**: k = 2π/λ consistent
-- **Crest/trough gate**: phase offsets invert the sum
-- **Chop gate**: |horizontal shift| < wave height (no mesh fold)
-- **Structure gates**: 5 presets, all uniforms present, audio chain wired, WebGL2+VAO
-- **Determinism gate**
+Open **[localhost:8000](http://localhost:8000)** in a browser with WebGL support. Stop the server with Ctrl+C.
 
-| ✨ Render | three.js (yerel vendor) · PBR · shadow map · ACES · GGX + Fresnel su |
-| 🫧 Köpük | Gerstner Jacobian determinantinden — fiziksel beyaz köpük |
+**TR:** Komutu depo kökünde çalıştır, ardından yukarıdaki yerel adresi aç. Durdurmak için Ctrl+C kullan.
 
-## 🧪 Why / Neden
+The app uses ES modules and an import map, so serve it over HTTP. Double-clicking `index.html` as a `file://` URL can fail browser module/CORS checks. There is no npm install or build step: Three.js and OrbitControls are included in `vendor/`; keep that folder beside `index.html` and `timing.mjs`.
 
-**TR:** Serinin 21 reposu hep "bir kare render"di. Bu ilk kez **çalışan bir şey**: fizik bir dosyaya gömülü, saniyede altmış kez ekrana basılıyor, üstelik sesi de aynı matematikten çıkıyor. Render ile arasındaki fark: render bir iddia, çalışan kod bir kanıt.
+**TR:** ES modülleri nedeniyle dosyayı çift tıklamak yerine HTTP sunucusuyla aç. npm kurulumu veya build gerekmez; `vendor/` klasöründeki yerel Three.js/OrbitControls dosyaları ve `timing.mjs` uygulamanın parçasıdır.
 
-## 📄 License
+## Controls / Kontroller
 
-MIT
+| Action | Result / Sonuç |
+| --- | --- |
+| Drag / Sürükle | Orbit the camera / Kamerayı döndür |
+| Mouse wheel / Tekerlek | Zoom / Yakınlaş-uzaklaş |
+| ← / → | Change wave direction / Dalga yönünü değiştir |
+| ↑ / ↓ | Change speed / Hızı değiştir |
+| Click the sea / Denize tıkla | Start audio / Sesi başlat |
+| 📷 gemi takibi | Toggle ship-follow camera / Gemi takibini aç-kapat |
+
+Sound starts after a user gesture, as required by browser autoplay rules. Frame rate depends on the browser, GPU and viewport; the HUD counts actual rendered frames. Ship movement uses per-frame elapsed time, independently of the FPS display interval.
+
+## Presets
+
+| Preset | Scene / Sahne |
+| --- | --- |
+| `sakin` | Calm daylight / Sakin gündüz |
+| `firtina` | Darker sky and larger waves / Koyu gökyüzü ve büyük dalgalar |
+| `gunbatimi` | Orange sunset / Turuncu gün batımı |
+| `ay` | Moonlit sea / Ay ışığında deniz |
+| `cak` | Bright midday / Parlak öğle |
+
+## Check the project / Doğrulama
+
+Python is needed for the existing physics/structure checks. Node.js is needed only for JavaScript checks, not to use the app.
+
+```sh
+python3 tests/verify.py
+python3 scripts/check_javascript.py
+node --test tests/timing.test.mjs
+```
+
+CI runs these commands on Python 3.11/3.12 with Node 24. The timing tests compare movement at 60/144 Hz, check measured frame counts and cover returning from a paused tab. The module check parses the shipped JavaScript and verifies local import-map files.
+
+These checks do not certify visual rendering, audio output or a particular FPS on every device. The physics checks include a Python counterpart and HTML structure checks; they are not a full browser simulation.
+
+**TR:** Testler fizik/HTML yapısını, JS sözdizimini ve zaman hesabını kapsar. Her cihazda aynı görüntü, ses veya FPS garantisi vermez.
+
+## Source map / Dosyalar
+
+| File | Purpose |
+| --- | --- |
+| `index.html` | Scene, controls, wave field, ships and audio |
+| `timing.mjs` | Per-frame time delta and measured FPS |
+| `vendor/` | Local Three.js and OrbitControls modules |
+| `tests/verify.py` | Existing numerical and structure checks |
+| `tests/timing.test.mjs` | Timing regression tests |
+| `scripts/check_javascript.py` | JavaScript syntax and local import checks |
+
+## License
+
+MIT, as declared by the project. Vendored Three.js code retains its own upstream notices.

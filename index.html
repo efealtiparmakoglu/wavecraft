@@ -51,6 +51,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { createFrameClock } from './timing.mjs';
 
 window.addEventListener('error', e => {
   const f = document.getElementById('fps');
@@ -466,10 +467,10 @@ addEventListener('resize', () => {
 });
 
 const baslangic = performance.now();
-let sonKare = baslangic, tepeOrt = 0, fpsOrt = 60, sonDt = 0.016;
+const frameClock = createFrameClock(baslangic);
+let tepeOrt = 0, fpsOrt = null;
 function kare(simdi){
-  const t = (simdi - baslangic) / 1000;
-  sonDt = Math.min(0.05, (simdi - sonKare) / 1000 + sonDt);
+  const { elapsed: t, delta: sonDt, fps } = frameClock.tick(simdi);
   const { tepe } = dalgalariHesapla(yon, P);
   gokMat.uniforms.u_time.value = t;
 
@@ -508,12 +509,11 @@ function kare(simdi){
 
   renderer.render(scene, camera);
 
-  if (simdi - sonKare > 400){
-    fpsOrt = fpsOrt * 0.5 + (1000 / (simdi - sonKare) * 4) * 0.5;
+  if (fps !== null){
+    fpsOrt = fpsOrt === null ? fps : fpsOrt * 0.5 + fps * 0.5;
     document.getElementById('fps').textContent = Math.round(fpsOrt);
     document.getElementById('stat').textContent =
       `5 dalga · tepe ${Math.abs(tepe).toFixed(2)} m · hız ${(P.wind*hizCarpan).toFixed(1)}×`;
-    sonKare = simdi;
   }
   requestAnimationFrame(kare);
 }
